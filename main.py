@@ -37,7 +37,7 @@ PLUGIN_NAME = "astrbot_plugin_group_world"
 
 
 class Main(Star):
-    """群聊世界 V1.5.0.
+    """群聊世界 V1.6.2.
 
     The plugin deliberately relies on AstrBot's unified event/message layer.
     This keeps the game logic independent from QQ's transport while declaring
@@ -51,6 +51,8 @@ class Main(Star):
         self._task: asyncio.Task | None = None
         self._web_tokens: dict[str, tuple[str, int]] = {}
         self._last_proactive_broadcast_at = 0.0
+        self._web_action_guard: dict[tuple[str, str], float] = {}
+        self._duel_lock = asyncio.Lock()
         self._schema = {}
         try:
             self._schema = json.loads((Path(__file__).parent / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -144,6 +146,9 @@ class Main(Star):
         except Exception:
             pass
         for arg in args:
+            uid_match = re.search(r"\bGW-[A-Za-z0-9]{10}\b", arg, flags=re.I)
+            if uid_match:
+                return uid_match.group(0).upper()
             m = re.search(r"(?:@)?(\d{5,})", arg)
             if m:
                 return m.group(1)
@@ -222,6 +227,31 @@ class Main(Star):
     async def _scheduler_tick(self) -> None:
         if not self.config.get("enabled", True):
             return
+        # Finish countdown-based revivals even when the player does not send a message.
+        for rp in self.db.get_due_respawns(int(time.time()),100):
+            try:
+                gid=str(rp["last_combat_group_id"] or "")
+                hp=max(1,int(int(rp["max_hp"])*float(self.engine.cfg("respawn_hp_percent",gid,0.5))))
+                self.db.set_global_player_fields(rp["user_id"],{"hp":hp,"death_state":0,"respawn_at":0,"revive_count":int(rp["revive_count"])+1,"last_combat_at":datetime.now(timezone.utc).isoformat(timespec="seconds")})
+                g=self.db.get_group(gid) if gid else None
+                if g and g["session_origin"]:
+                    await self._broadcast(g["session_origin"],f"✨【自动复活】{rp['name']} 的复活倒计时结束，已恢复 {hp}/{rp['max_hp']} 战斗生命。",proactive=False)
+            except Exception as exc:
+                logger.debug("[群聊世界] 自动复活失败：%s",exc)
+
+        # Deliver cross-group duel messages to the opponent's original session.
+        for msg in self.db.fetchall("SELECT * FROM duel_messages WHERE delivered=0 ORDER BY id ASC LIMIT 50"):
+            try:
+                battle=self.db.get_duel(int(msg["battle_id"]))
+                if not battle: continue
+                recipient=str(msg["recipient_user_id"])
+                origin = battle["p1_origin"] if battle["p1_user_id"]==recipient else battle["p2_origin"]
+                sender = battle["p1_name"] if battle["p1_user_id"]==msg["sender_user_id"] else battle["p2_name"]
+                if await self._broadcast(origin, f"💬【决斗战后留言】{sender}：{msg['message']}", proactive=False):
+                    self.db.mark_duel_messages_delivered(recipient,[int(msg["id"])])
+            except Exception as exc:
+                logger.debug("[群聊世界] 决斗留言投递失败：%s",exc)
+        # Expired queued matches are cleaned by the DB query when matching occurs.
         # Auto combat is stateful and runs independently of incoming messages.
         auto_interval=max(3,int(self.config.get("auto_battle_interval_seconds",8)))
         for ab in self.db.get_auto_battles_due(int(time.time()), auto_interval):
@@ -379,7 +409,7 @@ class Main(Star):
             "📖 【群聊世界命令】\n\n"
             "👤 玩家：/注册 [邀请码] /我的 /签到 /邀请码 /教程 /继续教程 /跳过教程 /地图\n"
             "🗺️ 冒险：/探索 /探索 深度 /探索 危险 /钓鱼 /挖矿 /打工 /怪物\n"
-            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑\n"
+            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗 /决斗状态 /决斗攻击 /决斗技能 /战后留言 /复活状态\n"
             "🎒 物品：/背包 /商店 /购买 ID 数量 /使用 ID 数量 /装备 /穿戴 ID /强化 ID\n"
             "🐾 宠物：/宠物 /抽宠物 /出战宠物 ID\n"
             "⭐ 成长：/职业 /转职 职业 /任务 /任务领取 /成就\n"
@@ -550,6 +580,104 @@ class Main(Star):
         else:
             result=self.engine.boss_use_skill(group,uid,name,args[0])
         yield event.plain_result(result.text)
+
+    @filter.command("战斗", alias={"战斗中心","战斗状态","combat"})
+    async def combat_center(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        uid=self._user(event); gid=self._group(event); name=self._name(event)
+        p,_=self.engine.ensure_player(gid,uid,name)
+        eq=self.db.get_equipped_stats("__GLOBAL_USER__",uid); pet=self.db.get_active_pet("__GLOBAL_USER__",uid)
+        auto=self.db.get_auto_battle(gid,uid); duel=self.db.get_active_duel_for_user(uid); queue=self.db.get_duel_queue_user(uid)
+        lines=["⚔️【玩家战斗中心】",f"UID：{p['player_uid']}｜QQ/平台ID：{p['user_id']}",f"❤️ 战斗生命：{p['hp']}/{p['max_hp']}｜⚡体力：{p['stamina']}/{p['max_stamina']}",f"⚔️ 攻击：{p['battle_attack']+eq.get('attack',0)+(int(pet['attack'])*2 if pet else 0)}｜🛡️ 防御：{p['battle_defense']+eq.get('defense',0)+(int(pet['defense']) if pet else 0)}｜💥暴击：{p['battle_crit_rate']}%｜💨闪避：{p['battle_dodge_rate']}%｜⚡速度：{p['battle_speed']}",f"🏆 PVP：{p['pvp_rating']}｜胜 {p['battle_wins']} / 负 {p['battle_losses']} / 平 {p['battle_draws']}｜击杀 {p['battle_kills']} / 死亡 {p['battle_deaths']}"]
+        if p['death_state']:
+            left=max(0,int(p['respawn_at'])-int(time.time())); lines.append(f"💀 当前：死亡，自动复活剩余 {self._fmt_seconds(left)}")
+        else: lines.append("✅ 当前：存活")
+        if auto: lines.append(f"🤖 自动战斗：开启｜目标：{'Boss' if auto['target_type']=='boss' else '当前怪物'}｜已执行 {auto['turns']} 回合")
+        if duel: lines.append(f"⚔️ 决斗：#{duel['id']}｜{'你的回合' if duel['turn_user_id']==uid else '等待对手'}｜对手 {duel['p2_name'] if duel['p1_user_id']==uid else duel['p1_name']}")
+        elif queue: lines.append(f"🔎 匹配：排队中｜PVP {queue['rating']}｜剩余 {self._fmt_seconds(max(0,int(queue['expires_at'])-int(time.time())))}")
+        lines.append("\n指令：/自动战斗 开启｜/自动战斗 Boss｜/自动战斗 关闭｜/决斗 匹配｜/决斗 状态｜/复活状态")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("决斗", alias={"跨群决斗","pvp"})
+    async def duel(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event); action=(args[0] if args else "匹配")
+        g=self._group(event); u=self._user(event); n=self._name(event)
+        if action in {"状态","status"}: yield event.plain_result(self.engine.duel_status(u)); return
+        if action in {"取消","退出"}:
+            self.db.clear_duel_queue_user(u); yield event.plain_result("🛑 已退出决斗匹配队列。"); return
+        if action in {"匹配","开始","join"}:
+            origin=getattr(event,"unified_msg_origin","") or (self.db.get_group(g)["session_origin"] if g and self.db.get_group(g) else "")
+            async with self._duel_lock:
+                text=self.engine.duel_join(g,u,n,origin)
+                b=self.db.get_active_duel_for_user(u)
+            yield event.plain_result(text)
+            if b:
+                other=b["p2_origin"] if b["p1_user_id"]==u else b["p1_origin"]
+                other_name=b["p2_name"] if b["p1_user_id"]==u else b["p1_name"]
+                if other and other!=origin:
+                    await self._broadcast(other,f"⚔️【跨群决斗 #{b['id']}】你已匹配到 {n}！现在开始战斗。输入 `/决斗状态` 查看，轮到你时输入 `/决斗攻击`。",proactive=False)
+            return
+        yield event.plain_result("用法：/决斗 匹配｜/决斗 状态｜/决斗 取消")
+
+    @filter.command("决斗攻击", alias={"pvp攻击"})
+    async def duel_attack(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        text,b=self.engine.duel_action(self._user(event),"attack")
+        yield event.plain_result(text)
+        if b:
+            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
+            origin=getattr(event,"unified_msg_origin","")
+            if other and other!=origin:
+                await self._broadcast(other,text,proactive=False)
+
+    @filter.command("决斗技能", alias={"pvp技能"})
+    async def duel_skill(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        if not args: yield event.plain_result("用法：/决斗技能 技能名"); return
+        text,b=self.engine.duel_action(self._user(event),"skill",args[0]); yield event.plain_result(text)
+        if b:
+            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
+            origin=getattr(event,"unified_msg_origin","")
+            if other and other!=origin:
+                await self._broadcast(other,text,proactive=False)
+
+    @filter.command("决斗防御", alias={"pvp防御"})
+    async def duel_guard(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        text,b=self.engine.duel_action(self._user(event),"guard"); yield event.plain_result(text)
+        if b:
+            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
+            origin=getattr(event,"unified_msg_origin","")
+            if other and other!=origin:
+                await self._broadcast(other,text,proactive=False)
+
+    @filter.command("战后留言", alias={"决斗留言"})
+    async def duel_message(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        if not args: yield event.plain_result("用法：/战后留言 内容"); return
+        text,b,msg_id=self.engine.duel_message(self._user(event)," ".join(args)); yield event.plain_result(text)
+        if b:
+            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
+            sender=b["p1_name"] if b["p1_user_id"]==self._user(event) else b["p2_name"]
+            origin=getattr(event,"unified_msg_origin","")
+            delivered=False if not other or other==origin else await self._broadcast(other,f"💬【决斗战后留言】{sender}：{' '.join(args)}",proactive=False)
+            if delivered and msg_id:
+                self.db.mark_duel_messages_delivered(self._user(event),[int(msg_id)])
+
+    @filter.command("复活状态", alias={"死亡状态","复活"})
+    async def revive_status(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        yield event.plain_result(self.engine.death_status(self._group(event),self._user(event)))
 
     @filter.command("自动战斗", alias={"auto战斗", "挂机战斗"})
     async def auto_battle(self,event:AstrMessageEvent):
@@ -991,11 +1119,18 @@ class Main(Star):
             yield event.plain_result(blocked)
             return
         args = self._args(event)
-        target = self._target_id(event, args)
-        if not target:
-            yield event.plain_result("用法：/转账 @用户 金额，或 /转账 用户ID 金额")
+        target_ref = self._target_id(event, args)
+        if not target_ref:
+            yield event.plain_result("用法：/转账 @用户 金额，或 /转账 玩家UID 金额")
             return
-        numeric_args = [a for a in args if a.isdigit() and a != target]
+        target = target_ref
+        if target_ref.upper().startswith("GW-"):
+            matched = self.db.find_player_by_uid(target_ref.upper())
+            if not matched:
+                yield event.plain_result("❌ 找不到这个玩家 UID，请先确认 UID 是否正确。")
+                return
+            target = str(matched["user_id"])
+        numeric_args = [a for a in args if a.isdigit() and a != target_ref]
         amount_arg = numeric_args[-1] if numeric_args else None
         if not amount_arg:
             yield event.plain_result("请输入转账金额。")
@@ -1190,6 +1325,20 @@ class Main(Star):
         self._web_tokens[token] = (self._web_username() or "password-login", int(time.time()) + 6 * 3600)
         return token
 
+    def _web_action_allowed_once(self, group_id: str, action: str, window_seconds: int = 4) -> bool:
+        """Prevent duplicate browser handlers/retries from repeating destructive actions."""
+        now = time.monotonic()
+        key = (str(group_id), str(action))
+        previous = self._web_action_guard.get(key, 0.0)
+        if now - previous < max(1, int(window_seconds)):
+            return False
+        self._web_action_guard[key] = now
+        # Small cleanup to avoid unbounded growth on busy installations.
+        if len(self._web_action_guard) > 512:
+            cutoff = now - 120
+            self._web_action_guard = {k: v for k, v in self._web_action_guard.items() if v >= cutoff}
+        return True
+
     def _require_web(self, write: bool = False, token: str | None = None):
         if self._web_authorized(write=write, token=token):
             return None
@@ -1204,7 +1353,7 @@ class Main(Star):
         return json_response({
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
-            "version": "1.5.0",
+            "version": "1.6.2",
             "username": username,
             "authenticated": authed,
             "password_configured": password_configured,
@@ -1269,21 +1418,49 @@ class Main(Star):
         denied = self._require_web(False)
         if denied: return denied
         group_id = str(request.query.get("group_id") or "") if request else ""
-        if not group_id:
-            return json_response({"events": []})
-        rows = self.db.get_recent_events(group_id, 200)
+        if group_id:
+            rows = self.db.get_recent_events(group_id, 300)
+        else:
+            rows = self.db.fetchall("SELECT * FROM world_event_logs ORDER BY created_at DESC LIMIT 500")
         return json_response({"events": [dict(r) for r in rows]})
 
     async def page_logs(self):
         denied = self._require_web(False)
         if denied: return denied
         group_id = str(request.query.get("group_id") or "") if request else ""
-        if not group_id:
-            return json_response({"admin_logs": [], "action_logs": []})
+        if group_id:
+            admin_rows = self.db.get_recent_logs(group_id, 200)
+            action_rows = self.db.get_group_action_logs(group_id, 300)
+        else:
+            admin_rows = self.db.fetchall("SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT 500")
+            action_rows = self.db.fetchall("SELECT * FROM action_logs ORDER BY created_at DESC LIMIT 500")
         return json_response({
-            "admin_logs": [dict(r) for r in self.db.get_recent_logs(group_id, 100)],
-            "action_logs": [dict(r) for r in self.db.get_group_action_logs(group_id, 150)],
+            "admin_logs": [dict(r) for r in admin_rows],
+            "action_logs": [dict(r) for r in action_rows],
         })
+
+    async def page_tasks(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        date_key = str(request.query.get("date") or self.db.get_today_key()) if request else self.db.get_today_key()
+        group_id = str(request.query.get("group_id") or "") if request else ""
+        rows = self.db.get_dashboard_tasks(date_key, group_id or None, 1500)
+        summary = {
+            "rows": len(rows),
+            "completed": sum(1 for r in rows if int(r["completed"] or 0)),
+            "players": len({str(r["user_id"]) for r in rows}),
+        }
+        return json_response({"date": date_key, "tasks": [dict(r) for r in rows], "summary": summary})
+
+    async def page_tutorials(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        rows = self.db.get_dashboard_tutorials(1000)
+        counts = {"pending": 0, "completed": 0, "skipped": 0}
+        for r in rows:
+            key = str(r["tutorial_status"] or "pending")
+            counts[key] = counts.get(key, 0) + 1
+        return json_response({"tutorials": [dict(r) for r in rows], "counts": counts})
 
     async def page_settings(self):
         denied = self._require_web(False)
@@ -1352,6 +1529,8 @@ class Main(Star):
         if not row:
             self.db.upsert_group(group_id)
             row = self.db.get_group(group_id)
+        if action in {"event", "boss_start", "boss_end", "spawn_npc", "end_event", "clear_npc", "toggle"} and not self._web_action_allowed_once(group_id, action):
+            return json_response({"ok": False, "message": "操作正在处理中，请勿重复点击；如果仍需操作，请等待几秒后再试。", "duplicate": True})
         if action == "toggle":
             enabled = 0 if row["enabled"] else 1
             self.db.update_group(group_id, enabled=enabled)
@@ -1361,12 +1540,12 @@ class Main(Star):
             if not bool(self.engine.cfg("enable_auto_world_events", group_id, True)) or ("world_event_enabled" in row.keys() and not bool(row["world_event_enabled"])):
                 return json_response({"ok": False, "message": "本群/全局已关闭世界事件，请先开启世界事件系统。"})
             text = self.engine.random_world_event(group_id)
-            await self._broadcast(row["session_origin"] or "", "📢【管理员触发世界事件】\n" + text + self._proactive_footer())
+            await self._broadcast(row["session_origin"] or "", "📢【管理员触发世界事件】\n" + text, proactive=False)
             self.db.add_admin_log(group_id, self._web_username() or "web", "event", None, text[:500])
             return json_response({"ok": True, "message": text, "broadcast": True})
         if action == "boss_start":
             text = self.engine.spawn_boss(group_id)
-            await self._broadcast(row["session_origin"] or "", text + self._proactive_footer())
+            await self._broadcast(row["session_origin"] or "", text, proactive=False)
             self.db.add_admin_log(group_id, self._web_username() or "web", "spawn_boss", None, text[:500])
             return json_response({"ok": True, "message": text, "broadcast": True})
         if action == "save_settings":
@@ -1390,7 +1569,7 @@ class Main(Star):
             return json_response({"ok":True,"message":"本群世界设置已保存。","group":dict(self.db.get_group(group_id))})
         if action == "spawn_npc":
             text=self.engine.spawn_npc(group_id)
-            await self._broadcast(row["session_origin"] or "", text + self._proactive_footer())
+            await self._broadcast(row["session_origin"] or "", text, proactive=False)
             self.db.add_admin_log(group_id,self._web_username() or "web","spawn_npc",None,text[:500])
             return json_response({"ok":True,"message":text,"broadcast":True})
         if action == "end_event":
@@ -1459,7 +1638,7 @@ class Main(Star):
                     else:
                         conn.execute(f"DELETE FROM {table} WHERE group_id=? AND user_id=?", ("__GLOBAL_USER__", user_id))
                 conn.execute(
-                    "UPDATE players SET level=1,exp=0,coins=?,gems=?,stamina=?,max_stamina=?,profession='无职业',title='初出茅庐',streak=0,total_checkin=0,last_checkin=NULL,explore_count=0,explore_day='',active_pet_id=NULL,tutorial_status='pending',tutorial_step=1,total_explores=0,total_games=0,total_work=0,total_boss_damage=0,total_earned_coins=0,total_spent_coins=0,last_action_at=NULL,banned=0,updated_at=? WHERE group_id=? AND user_id=?",
+                    "UPDATE players SET level=1,exp=0,coins=?,gems=?,stamina=?,max_stamina=?,profession='无职业',title='初出茅庐',streak=0,total_checkin=0,last_checkin=NULL,explore_count=0,explore_day='',active_pet_id=NULL,tutorial_status='pending',tutorial_step=1,total_explores=0,total_games=0,total_work=0,total_boss_damage=0,total_earned_coins=0,total_spent_coins=0,last_action_at=NULL,battle_attack=50,battle_defense=5,battle_crit_rate=8,battle_dodge_rate=3,battle_speed=100,battle_wins=0,battle_losses=0,battle_draws=0,battle_kills=0,battle_deaths=0,pvp_rating=1000,pvp_streak=0,death_state=0,respawn_at=0,revive_count=0,last_combat_group_id=NULL,last_combat_at=NULL,banned=0,updated_at=? WHERE group_id=? AND user_id=?",
                     (int(self.config.get("default_new_player_coins", 1000)), int(self.config.get("default_new_player_gems", 3)), int(self.config.get("max_stamina", 100)), int(self.config.get("max_stamina", 100)), datetime.now(timezone.utc).isoformat(timespec="seconds"), "__GLOBAL_USER__", user_id),
                 )
             updated = self.db.get_player("__GLOBAL_USER__", user_id)
@@ -1468,8 +1647,8 @@ class Main(Star):
             if not isinstance(fields, dict):
                 return error_response("fields 必须是对象", status_code=400)
             clean = {}
-            int_fields = {"level","exp","stamina","max_stamina","luck","renown","streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins","active_pet_id","hp","max_hp"}
-            text_fields = {"name","profession","title","tutorial_status","last_checkin","protected_until","explore_day","last_action_at"}
+            int_fields = {"level","exp","stamina","max_stamina","luck","renown","streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins","active_pet_id","hp","max_hp","battle_attack","battle_defense","battle_speed","battle_wins","battle_losses","battle_draws","battle_kills","battle_deaths","pvp_rating","pvp_streak","death_state","respawn_at","revive_count"}
+            text_fields = {"name","profession","title","tutorial_status","last_checkin","protected_until","explore_day","last_action_at","last_combat_group_id","last_combat_at"}
             for key, value in fields.items():
                 if key in int_fields:
                     if key == "active_pet_id" and (value is None or str(value).strip() == ""):
@@ -1479,6 +1658,9 @@ class Main(Star):
                             clean[key] = int(value)
                         except Exception:
                             return error_response(f"{key} 必须是整数", status_code=400)
+                elif key in {"battle_crit_rate","battle_dodge_rate"}:
+                    try: clean[key]=float(value)
+                    except Exception: return error_response(f"{key} 必须是数字",status_code=400)
                 elif key in text_fields:
                     clean[key] = str(value)[:80]
             if "tutorial_status" in clean and clean["tutorial_status"] not in {"pending","completed","skipped"}:
@@ -1510,28 +1692,166 @@ class Main(Star):
         self.db.add_admin_log("__GLOBAL_USER__", admin, action, user_id, f"amount={amount}")
         return json_response({"ok": True, "message": "玩家操作成功，已按全局角色数据更新。", "player": dict(updated) if updated else None})
 
-    async def page_data_export(self):
-        denied = self._require_web(False)
-        if denied: return denied
-        group_id = str(request.query.get("group_id") or "") if request else ""
-        snapshot = {
+    def _build_data_snapshot(self, group_id: str = "") -> dict[str, Any]:
+        """Build a portable, versioned SQLite snapshot for backup/export/import."""
+        tables = {
+            "groups": "groups", "players": "players", "inventory": "inventory", "pets": "pets",
+            "equipment": "equipment", "transactions": "transactions", "daily_tasks": "daily_tasks",
+            "achievements": "achievements", "cooldowns": "cooldowns", "game_sessions": "game_sessions",
+            "boss_damage": "boss_damage", "admin_logs": "admin_logs", "message_stats": "message_stats",
+            "group_members": "group_members", "invite_codes": "invite_codes", "invite_records": "invite_records",
+            "auto_battles": "auto_battles", "world_event_logs": "world_event_logs",
+            "monster_encounters": "monster_encounters", "player_skills": "player_skills",
+            "skill_cooldowns": "skill_cooldowns", "npc_interactions": "npc_interactions", "action_logs": "action_logs",
+        }
+        snapshot: dict[str, Any] = {
+            "format": "astrbot_plugin_group_world_snapshot",
+            "snapshot_version": 2,
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
             "config": self._safe_config(),
             "summary": self.db.get_dashboard_summary(group_id or None),
-            "groups": [dict(r) for r in (self.db.get_group_details(500) if not group_id else [self.db.get_group(group_id)]) if r],
+            "tables": {},
         }
-        snapshot["players"] = [dict(r) for r in self.engine.db.get_global_players(5000)]
-        snapshot["transactions"] = [dict(r) for r in self.db.get_transactions("__GLOBAL_USER__", 5000)]
-        if group_id:
-            snapshot["events"] = [dict(r) for r in self.db.get_recent_events(group_id, 500)]
-            snapshot["admin_logs"] = [dict(r) for r in self.db.get_recent_logs(group_id, 500)]
+        for label, table in tables.items():
+            if label == "groups":
+                rows = self.db.get_group_details(500) if not group_id else [self.db.get_group(group_id)]
+                rows = [r for r in rows if r]
+            elif group_id and table in {"world_event_logs", "admin_logs", "message_stats", "group_members", "monster_encounters", "npc_interactions", "action_logs", "boss_damage", "game_sessions", "auto_battles"}:
+                rows = self.db.fetchall(f"SELECT * FROM {table} WHERE group_id=? ORDER BY 1 DESC LIMIT 5000", (group_id,))
+            elif table in {"players", "inventory", "pets", "equipment", "transactions", "daily_tasks", "achievements", "cooldowns", "player_skills", "skill_cooldowns", "invite_codes", "invite_records"}:
+                # Player-owned tables are global in current versions.
+                if table == "invite_codes":
+                    rows = self.db.fetchall("SELECT * FROM invite_codes ORDER BY created_at DESC LIMIT 5000")
+                elif table == "invite_records":
+                    rows = self.db.fetchall("SELECT * FROM invite_records ORDER BY created_at DESC LIMIT 5000")
+                elif table in {"player_skills", "skill_cooldowns"}:
+                    rows = self.db.fetchall(f"SELECT * FROM {table} LIMIT 5000")
+                else:
+                    rows = self.db.fetchall(f"SELECT * FROM {table} WHERE group_id='__GLOBAL_USER__' LIMIT 10000")
+            else:
+                rows = self.db.fetchall(f"SELECT * FROM {table} LIMIT 10000")
+            snapshot["tables"][label] = [dict(r) for r in rows]
+        # Retain the older top-level keys for backwards compatibility with V1.5 exports.
+        snapshot["groups"] = snapshot["tables"].get("groups", [])
+        snapshot["players"] = snapshot["tables"].get("players", [])
+        snapshot["transactions"] = snapshot["tables"].get("transactions", [])
+        snapshot["events"] = snapshot["tables"].get("world_event_logs", [])
+        snapshot["admin_logs"] = snapshot["tables"].get("admin_logs", [])
+        return snapshot
+
+    async def page_data_export(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        group_id = str(request.query.get("group_id") or "") if request else ""
+        snapshot = self._build_data_snapshot(group_id)
         target = self.data_dir / f"world-export-{int(time.time())}.json"
         target.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
         if file_response:
             return file_response(target, filename=target.name, content_type="application/json")
         return json_response(snapshot)
+
+    async def page_data_import(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        raw = payload.get("snapshot", payload.get("data"))
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception as exc:
+                return error_response(f"导入文件不是有效 JSON：{exc}", status_code=400)
+        if not isinstance(raw, dict):
+            return error_response("snapshot 必须是 JSON 对象。", status_code=400)
+        tables = raw.get("tables") if isinstance(raw.get("tables"), dict) else {}
+        # Accept legacy V1.5 top-level exports too.
+        legacy_map = {"groups":"groups", "players":"players", "transactions":"transactions", "events":"world_event_logs", "admin_logs":"admin_logs"}
+        for old_key, table_name in legacy_map.items():
+            if table_name not in tables and isinstance(raw.get(old_key), list):
+                tables[table_name] = raw[old_key]
+        allowed_tables = {
+            "groups","players","inventory","pets","equipment","transactions","daily_tasks","achievements","cooldowns",
+            "game_sessions","boss_damage","admin_logs","message_stats","group_members","invite_codes","invite_records",
+            "auto_battles","world_event_logs","monster_encounters","player_skills","skill_cooldowns","npc_interactions","action_logs",
+        }
+        selected = [(t, rows) for t, rows in tables.items() if t in allowed_tables and isinstance(rows, list)]
+        imported_config = 0
+        skipped_config = 0
+        incoming_config = raw.get("config") if isinstance(raw.get("config"), dict) else {}
+        # V2 exports include config. Restore only schema-known, type-safe values;
+        # never overwrite secrets with the masked `********` value.
+        config_changes = {}
+        for key, value in incoming_config.items():
+            spec = self._schema.get(key)
+            if not spec or spec.get("secret") or value == "********":
+                skipped_config += 1
+                continue
+            typ = spec.get("type")
+            valid = ((typ == "bool" and isinstance(value, bool)) or
+                     (typ == "int" and isinstance(value, int) and not isinstance(value, bool)) or
+                     (typ == "float" and isinstance(value, (int, float)) and not isinstance(value, bool)) or
+                     (typ in {"string", "text"} and isinstance(value, str)) or
+                     (typ == "list" and isinstance(value, list)))
+            if not valid:
+                skipped_config += 1
+                continue
+            slider = spec.get("slider")
+            if slider and isinstance(value, (int, float)) and not (slider["min"] <= value <= slider["max"]):
+                skipped_config += 1
+                continue
+            if key in {"group_overrides_json","shop_catalog_json","event_catalog_json","tutorial_pages_json","tip_catalog_json","pet_rarity_json"}:
+                try:
+                    fallback = "[]" if key == "tutorial_pages_json" else "{}"
+                    json.loads(value or fallback)
+                except Exception:
+                    skipped_config += 1
+                    continue
+            config_changes[key] = value
+        if not selected and not config_changes:
+            return error_response("没有找到可导入的数据表或有效配置。", status_code=400)
+        # Create a safety backup before changing any rows.
+        backup = self._build_data_snapshot("")
+        backup_path = self.data_dir / f"pre-import-backup-{int(time.time())}.json"
+        backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2), encoding="utf-8")
+        imported = 0
+        skipped = 0
+        with self.db.transaction() as conn:
+            for table, rows in selected:
+                actual_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                if not actual_cols:
+                    skipped += len(rows)
+                    continue
+                for row in rows[:20000]:
+                    if not isinstance(row, dict):
+                        skipped += 1
+                        continue
+                    payload_cols = [c for c in row.keys() if c in actual_cols]
+                    if not payload_cols:
+                        skipped += 1
+                        continue
+                    placeholders = ",".join("?" for _ in payload_cols)
+                    cols_sql = ",".join(payload_cols)
+                    values = [row[c] for c in payload_cols]
+                    try:
+                        conn.execute(f"INSERT OR REPLACE INTO {table} ({cols_sql}) VALUES ({placeholders})", values)
+                        imported += 1
+                    except Exception:
+                        skipped += 1
+        if config_changes:
+            self.config.update(config_changes)
+            imported_config = len(config_changes)
+            try:
+                save = getattr(self.config, "save_config", None)
+                if callable(save):
+                    save()
+            except Exception as exc:
+                logger.warning("[群聊世界] 导入配置保存失败：%s", exc)
+        total_skipped = skipped + skipped_config
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "data_import", None, f"imported={imported},skipped={total_skipped},config={imported_config},backup={backup_path.name}")
+        msg=f"导入完成：{imported} 行数据" + (f" + {imported_config} 项配置" if imported_config else "") + f"，跳过 {total_skipped} 项。"
+        return json_response({"ok": True, "message": msg, "imported": imported, "skipped": total_skipped, "imported_config": imported_config, "backup": backup_path.name})
 
     def _register_web_api(self) -> None:
         if not hasattr(self.context, "register_web_api") or not json_response:
@@ -1550,6 +1870,9 @@ class Main(Star):
             ("group/action", self.page_group_action, ["POST"], "群聊世界群操作"),
             ("player/action", self.page_player_action, ["POST"], "群聊世界玩家操作"),
             ("data/export", self.page_data_export, ["GET"], "群聊世界数据导出"),
+            ("data/import", self.page_data_import, ["POST"], "群聊世界数据导入"),
+            ("tasks", self.page_tasks, ["GET"], "群聊世界任务数据"),
+            ("tutorials", self.page_tutorials, ["GET"], "群聊世界教程数据"),
         ]
         for path, handler, methods, desc in routes:
             try:

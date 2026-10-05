@@ -721,6 +721,32 @@
       "step": 1
     }
   },
+  "auto_battle_ai_enabled": {
+    "description": "⚔️ AI 子项：自动战斗策略（默认开启）",
+    "type": "bool",
+    "default": true,
+    "hint": "只有 AI 总开关开启时生效。仅决定技能选择策略，不改变基础伤害数值。"
+  },
+  "auto_battle_ai_aggression": {
+    "description": "🧠 自动战斗攻击倾向",
+    "type": "float",
+    "default": 0.65,
+    "slider": {
+      "min": 0,
+      "max": 1,
+      "step": 0.05
+    }
+  },
+  "auto_battle_defense_threshold": {
+    "description": "🛡️ 自动战斗低血量防御阈值",
+    "type": "float",
+    "default": 0.35,
+    "slider": {
+      "min": 0.05,
+      "max": 0.95,
+      "step": 0.05
+    }
+  },
   "auto_battle_max_turns": {
     "description": "🤖 单次自动战斗最大回合数",
     "type": "int",
@@ -742,10 +768,11 @@
     }
   },
   "ai_story_enabled": {
-    "description": "🧠 AI 故事兼容开关（旧配置保留）",
+    "description": "兼容旧版 AI 故事开关（不再在后台显示）",
     "type": "bool",
     "default": false,
-    "hint": "兼容旧版本。新版可使用 ai_enabled 与 ai_npc_dialogue_enabled；AI 关闭不会影响正常游戏。"
+    "hint": "兼容旧版本。新版可使用 ai_enabled 与 ai_npc_dialogue_enabled；AI 关闭不会影响正常游戏。",
+    "invisible": true
   },
   "data_retention_days": {
     "description": "🗄️ 日志保留天数",
@@ -924,14 +951,14 @@
   "ai_enabled": {
     "type": "bool",
     "default": false,
-    "description": "🧠 启用可选 AI。",
-    "hint": "AI 仅增强 NPC 自然语言互动，不参与金币、伤害、掉落、概率等核心数值计算；AI 不可用或关闭时自动回退普通逻辑。"
+    "description": "🤖 AI 总开关（主开关）",
+    "hint": "全局 AI 总开关。关闭后 NPC AI 对话、自动战斗 AI 策略、决斗 AI 增强统一停用；普通玩法和基础战斗仍正常运行。"
   },
   "ai_npc_dialogue_enabled": {
     "type": "bool",
     "default": true,
-    "description": "🧠 AI NPC 对话增强。",
-    "hint": "仅当 ai_enabled 开启且当前群也开启 AI 时生效。"
+    "description": "🧑‍🌾 AI 子项：NPC 对话增强（默认开启）",
+    "hint": "只有 AI 总开关开启时生效。"
   },
   "ai_max_reply_chars": {
     "type": "int",
@@ -957,6 +984,122 @@
       "min": 0,
       "max": 100,
       "step": 1
+    }
+  },
+  "auto_buy_revive_item": {
+    "type": "bool",
+    "default": true,
+    "description": "🧪 死亡后金币足够时自动购买并使用复活药剂。"
+  },
+  "revive_item_cost": {
+    "type": "int",
+    "default": 1800,
+    "description": "🧪 复活药剂价格。",
+    "slider": {
+      "min": 0,
+      "max": 1000000,
+      "step": 100
+    }
+  },
+  "revive_hp_percent": {
+    "type": "float",
+    "default": 0.5,
+    "description": "🧪 使用复活药剂后的生命比例。",
+    "slider": {
+      "min": 0.1,
+      "max": 1.0,
+      "step": 0.05
+    }
+  },
+  "respawn_countdown_seconds": {
+    "type": "int",
+    "default": 300,
+    "description": "💀 金币不足时自动复活倒计时（秒）。",
+    "slider": {
+      "min": 10,
+      "max": 86400,
+      "step": 10
+    }
+  },
+  "respawn_hp_percent": {
+    "type": "float",
+    "default": 0.5,
+    "description": "⏳ 倒计时自动复活后的生命比例。",
+    "slider": {
+      "min": 0.1,
+      "max": 1.0,
+      "step": 0.05
+    }
+  },
+  "duel_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "⚔️ 开启跨群决斗。"
+  },
+  "duel_queue_timeout_seconds": {
+    "type": "int",
+    "default": 180,
+    "description": "⚔️ 决斗匹配队列超时（秒）。",
+    "slider": {
+      "min": 30,
+      "max": 3600,
+      "step": 30
+    }
+  },
+  "duel_match_rating_range": {
+    "type": "int",
+    "default": 200,
+    "description": "⚔️ 初始匹配积分范围。",
+    "slider": {
+      "min": 25,
+      "max": 2000,
+      "step": 25
+    }
+  },
+  "duel_turn_timeout_seconds": {
+    "type": "int",
+    "default": 120,
+    "description": "⚔️ 单场决斗超时/回合行动窗口（秒）。",
+    "slider": {
+      "min": 30,
+      "max": 900,
+      "step": 30
+    }
+  },
+  "duel_rating_delta": {
+    "type": "int",
+    "default": 25,
+    "description": "⚔️ 决斗积分变化。",
+    "slider": {
+      "min": 1,
+      "max": 500,
+      "step": 1
+    }
+  },
+  "duel_message_window_seconds": {
+    "type": "int",
+    "default": 300,
+    "description": "💬 决斗结束后允许留言的时间。",
+    "slider": {
+      "min": 30,
+      "max": 3600,
+      "step": 30
+    }
+  },
+  "duel_ai_enhance": {
+    "type": "bool",
+    "default": true,
+    "description": "⚔️ AI 子项：决斗策略增强（默认开启）",
+    "hint": "只有 AI 总开关开启时生效，不让 AI 直接决定伤害数值。"
+  },
+  "duel_ai_aggression": {
+    "type": "float",
+    "default": 0.55,
+    "description": "🧠 AI 攻击倾向。",
+    "slider": {
+      "min": 0,
+      "max": 1,
+      "step": 0.05
     }
   }
 }
