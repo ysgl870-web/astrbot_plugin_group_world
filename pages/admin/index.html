@@ -24,7 +24,7 @@
       <nav id="nav" class="nav"></nav>
       <div class="sidebar-foot">
         <div>作者：<b>ysgl</b></div>
-        <div id="versionText">群聊世界 V1.4.0</div>
+        <div id="versionText">群聊世界 V1.5.0</div>
       </div>
     </aside>
 
@@ -80,11 +80,44 @@
         <label>总签到<input id="pf_total_checkin" type="number" min="0"></label>
         <label>教程状态<select id="pf_tutorial_status"><option value="pending">进行中</option><option value="completed">已完成</option><option value="skipped">已跳过</option></select></label>
         <label>教程页<input id="pf_tutorial_step" type="number" min="0" max="10"></label>
+        <label>最后签到<input id="pf_last_checkin" type="text" placeholder="YYYY-MM-DD"></label>
+        <label>新人保护截止<input id="pf_protected_until" type="text" placeholder="ISO 时间，可留空"></label>
+        <label>今日探索次数<input id="pf_explore_count" type="number" min="0"></label>
+        <label>探索统计日期<input id="pf_explore_day" type="text" placeholder="YYYY-MM-DD"></label>
+        <label>累计探索<input id="pf_total_explores" type="number" min="0"></label>
+        <label>累计小游戏<input id="pf_total_games" type="number" min="0"></label>
+        <label>累计打工<input id="pf_total_work" type="number" min="0"></label>
+        <label>累计 Boss 伤害<input id="pf_total_boss_damage" type="number" min="0"></label>
+        <label>累计获得金币<input id="pf_total_earned_coins" type="number" min="0"></label>
+        <label>累计消费金币<input id="pf_total_spent_coins" type="number" min="0"></label>
+        <label>出战宠物 ID<input id="pf_active_pet_id" type="number" min="0" placeholder="留空=无"></label>
+        <label>最后行为时间<input id="pf_last_action_at" type="text" placeholder="ISO 时间，可留空"></label>
       </div>
       <div class="modal-actions"><button id="playerSave" class="primary">保存全部数据</button><button id="playerResetTutorial" class="ghost">仅重开教程</button></div>
     </div>
   </div>
 
+
+  <div id="groupModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><div><div class="eyebrow">WORLD SETTINGS</div><h2>群世界设置</h2><p id="groupModalGroup" class="muted"></p></div><button id="groupModalClose" class="ghost">关闭</button></div>
+      <div class="form-grid">
+        <label>世界天气<input id="gf_weather" type="text"></label>
+        <label>世界地点<input id="gf_location" type="text"></label>
+        <label>世界事件<input id="gf_event_enabled" type="checkbox"></label>
+        <label>探索系统<input id="gf_explore_enabled" type="checkbox"></label>
+        <label>怪物系统<input id="gf_monster_enabled" type="checkbox"></label>
+        <label>怪物基础概率<input id="gf_monster_chance" type="number" min="0" max="100"></label>
+        <label>最多怪物数量<input id="gf_monster_max" type="number" min="1" max="3"></label>
+        <label>遇见多个怪概率<input id="gf_monster_multi" type="number" min="0" max="100"></label>
+        <label>随机 NPC<input id="gf_npc_enabled" type="checkbox"></label>
+        <label>NPC触发概率<input id="gf_npc_chance" type="number" min="0" max="100"></label>
+        <label>NPC最短间隔(分钟)<input id="gf_npc_interval" type="number" min="5" max="1440"></label>
+        <label>本群 AI<input id="gf_ai_enabled" type="checkbox"></label>
+      </div>
+      <div class="modal-actions"><button id="groupSave" class="primary">保存世界设置</button><button id="groupSpawnNpc" class="ghost">立即召唤 NPC</button><button id="groupEndEvent" class="ghost">结束当前事件</button><button id="groupClearNpc" class="ghost">让 NPC 离开</button></div>
+    </div>
+  </div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
