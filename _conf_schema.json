@@ -742,10 +742,10 @@
     }
   },
   "ai_story_enabled": {
-    "description": "🤖 AI 剧情预留开关",
+    "description": "🧠 AI 故事兼容开关（旧配置保留）",
     "type": "bool",
     "default": false,
-    "hint": "当前版本只保留配置位，不会自动调用模型，避免增加额外 token 消耗。"
+    "hint": "兼容旧版本。新版可使用 ai_enabled 与 ai_npc_dialogue_enabled；AI 关闭不会影响正常游戏。"
   },
   "data_retention_days": {
     "description": "🗄️ 日志保留天数",
@@ -795,7 +795,7 @@
   "monster_catalog_json": {
     "type": "text",
     "default": "{}",
-    "description": "自定义怪物模板 JSON。字段：name/hp/attack/defense/coins/exp/items。"
+    "description": "自定义怪物模板 JSON。字段：name/hp/attack/defense/coins/exp/items/skills；skills 可配置 name/multiplier/chance/text/aoe。"
   },
   "skill_system_enabled": {
     "type": "bool",
@@ -864,5 +864,99 @@
     "default": "🎮 想开始游玩吗？输入 /注册 开始游玩群聊世界。",
     "description": "主动消息固定尾部提示",
     "hint": "随机事件、玩法小提示、自动Boss等主动消息发送后都会追加这段文字。"
+  },
+  "explore_monster_max_count": {
+    "type": "int",
+    "default": 3,
+    "description": "👹 单次探索最多同时遭遇的怪物数量。",
+    "slider": {
+      "min": 1,
+      "max": 3,
+      "step": 1
+    }
+  },
+  "explore_monster_multi_chance_percent": {
+    "type": "int",
+    "default": 28,
+    "description": "👹 探索遇到怪物时，生成多只怪物的概率。",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "npc_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "🧑‍🌾 启用随机 NPC 事件。",
+    "hint": "关闭后普通游戏、探索、Boss、商店等功能不受影响。"
+  },
+  "npc_chance_percent": {
+    "type": "int",
+    "default": 10,
+    "description": "🧑‍🌾 NPC 随机触发概率。",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "npc_interval_minutes": {
+    "type": "int",
+    "default": 120,
+    "description": "🧑‍🌾 同一群 NPC 最短出现间隔（分钟）。",
+    "slider": {
+      "min": 5,
+      "max": 1440,
+      "step": 5
+    }
+  },
+  "npc_duration_minutes": {
+    "type": "int",
+    "default": 30,
+    "description": "🧑‍🌾 NPC 单次停留时间（分钟）。",
+    "slider": {
+      "min": 5,
+      "max": 240,
+      "step": 5
+    }
+  },
+  "ai_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "🧠 启用可选 AI。",
+    "hint": "AI 仅增强 NPC 自然语言互动，不参与金币、伤害、掉落、概率等核心数值计算；AI 不可用或关闭时自动回退普通逻辑。"
+  },
+  "ai_npc_dialogue_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "🧠 AI NPC 对话增强。",
+    "hint": "仅当 ai_enabled 开启且当前群也开启 AI 时生效。"
+  },
+  "ai_max_reply_chars": {
+    "type": "int",
+    "default": 240,
+    "description": "🧠 AI NPC 最长回复字数。",
+    "slider": {
+      "min": 60,
+      "max": 600,
+      "step": 20
+    }
+  },
+  "ai_npc_prompt": {
+    "type": "text",
+    "default": "你是群聊世界中的 NPC。只做自然、简短、有角色感的互动，不修改数值、不承诺额外奖励。",
+    "description": "🧠 AI NPC 系统提示词。",
+    "hint": "建议只约束表达风格，不让 AI 决定游戏数值。"
+  },
+  "boss_skill_chance_percent": {
+    "type": "int",
+    "default": 22,
+    "description": "🐉 Boss 使用特殊技能的概率。特殊技能可触发范围伤害。",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
   }
 }

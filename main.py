@@ -37,7 +37,7 @@ PLUGIN_NAME = "astrbot_plugin_group_world"
 
 
 class Main(Star):
-    """群聊世界 V1.4.0.
+    """群聊世界 V1.5.0.
 
     The plugin deliberately relies on AstrBot's unified event/message layer.
     This keeps the game logic independent from QQ's transport while declaring
@@ -182,6 +182,22 @@ class Main(Star):
             logger.warning("[群聊世界] 主动消息发送失败: %s", exc)
             return False
 
+    async def _ai_npc_reply(self, event: AstrMessageEvent, base: str) -> str:
+        try:
+            group_id=self._group(event)
+            row=self.db.get_group(group_id) if group_id else None
+            enabled=bool(self.config.get("ai_enabled",False)) and bool(self.config.get("ai_npc_dialogue_enabled",True)) and bool(row["ai_enabled"] if row and "ai_enabled" in row.keys() else True)
+            if not enabled:
+                return base
+            provider_id=await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
+            prompt=str(self.config.get("ai_npc_prompt","你是群聊世界中的 NPC。只做自然、简短、有角色感的互动，不修改数值、不承诺额外奖励。"))
+            resp=await self.context.llm_generate(chat_provider_id=provider_id,prompt=prompt+"\n已执行的游戏结果："+base+"\n请给出一句到三句 NPC 对话，最多"+str(int(self.config.get("ai_max_reply_chars",240)))+"字。")
+            extra=(getattr(resp,"completion_text","") or "").strip()
+            return base + ("\n\n🧠 NPC："+extra if extra else "")
+        except Exception as exc:
+            logger.debug("[群聊世界] AI NPC 对话不可用，回退普通逻辑：%s", exc)
+            return base
+
     # ------------------------- automatic world loop -------------------------
 
     def _ensure_scheduler(self) -> None:
@@ -252,10 +268,20 @@ class Main(Star):
                     last_event = datetime.fromisoformat(group["last_event_at"]).timestamp()
                     interval = int(self.engine.cfg("world_event_interval_minutes", group_id, 90)) * 60
                     chance = int(self.engine.cfg("world_event_chance", group_id, 60))
-                    if active > 0 and now - last_event >= interval and secrets.randbelow(100) < max(0, min(100, chance)):
+                    if (group["world_event_enabled"] if "world_event_enabled" in group.keys() else 1) and bool(self.engine.cfg("enable_auto_world_events", group_id, True)) and active > 0 and now - last_event >= interval and secrets.randbelow(100) < max(0, min(100, chance)):
                         candidates.append({"priority": 2, "kind": "world_event", "group": group_id, "origin": origin})
                 except Exception:
                     pass
+
+            try:
+                if self.engine.group_feature_enabled(group_id,"npc_enabled","npc_enabled",True):
+                    last_npc = group["last_npc_at"] if "last_npc_at" in group.keys() else None
+                    npc_interval = int(group["npc_interval_minutes"] if group["npc_interval_minutes"] is not None else self.engine.cfg("npc_interval_minutes", group_id, 120)) * 60
+                    npc_chance = int(group["npc_chance_percent"] if group["npc_chance_percent"] is not None else self.engine.cfg("npc_chance_percent", group_id, 10))
+                    if (not last_npc or now - datetime.fromisoformat(last_npc).timestamp() >= npc_interval) and active > 0 and secrets.randbelow(100) < max(0,min(100,npc_chance)):
+                        candidates.append({"priority": 1, "kind": "npc", "group": group_id, "origin": origin})
+            except Exception:
+                pass
 
             try:
                 if bool(self.config.get("proactive_tips_enabled", True)):
@@ -295,6 +321,8 @@ class Main(Star):
                 text = self.engine.random_world_event(group_id)
             elif kind == "tip":
                 text = self.engine.random_tip(group_id)
+            elif kind == "npc":
+                text = self.engine.spawn_npc(group_id)
             elif kind == "auto_boss":
                 text = self.engine.spawn_boss(group_id)
             if text:
@@ -303,6 +331,8 @@ class Main(Star):
                     self._last_proactive_broadcast_at = time.time()
                     if kind == "tip":
                         self.db.update_group(group_id, last_tip_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+                    elif kind == "npc":
+                        self.db.update_group(group_id, last_npc_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
                     elif kind in {"world_event"}:
                         self.db.update_group(group_id, last_event_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         except Exception as exc:
@@ -538,6 +568,27 @@ class Main(Star):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
         yield event.plain_result(self.engine.monster_flee(self._group(event),self._user(event),self._name(event)))
+
+    @filter.command("NPC", alias={"npc状态","神秘NPC"})
+    async def npc(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        group=self._group(event); uid=self._user(event); name=self._name(event)
+        if not args:
+            yield event.plain_result(self.engine.npc_status(group)); return
+        result=self.engine.npc_interact(group,uid,name,args[0])
+        # Optional AI only enriches NPC dialogue; gameplay rewards are deterministic and stay usable without AI.
+        if len(args)>=2 and args[0].lower() in {"talk","对话","聊天"}:
+            result = await self._ai_npc_reply(event, result)
+        yield event.plain_result(result)
+
+    @filter.command("NPC对话", alias={"与NPC对话","NPC聊天"})
+    async def npc_talk(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        base=self.engine.npc_interact(self._group(event),self._user(event),self._name(event),"talk")
+        yield event.plain_result(await self._ai_npc_reply(event,base))
 
     @filter.command("地图")
     async def map(self, event: AstrMessageEvent):
@@ -1153,7 +1204,7 @@ class Main(Star):
         return json_response({
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
-            "version": "1.4.0",
+            "version": "1.5.0",
             "username": username,
             "authenticated": authed,
             "password_configured": password_configured,
@@ -1307,6 +1358,8 @@ class Main(Star):
             self.db.add_admin_log(group_id, self._web_username() or "web", "toggle", None, f"enabled={enabled}")
             return json_response({"ok": True, "message": "已更新群聊世界开关"})
         if action == "event":
+            if not bool(self.engine.cfg("enable_auto_world_events", group_id, True)) or ("world_event_enabled" in row.keys() and not bool(row["world_event_enabled"])):
+                return json_response({"ok": False, "message": "本群/全局已关闭世界事件，请先开启世界事件系统。"})
             text = self.engine.random_world_event(group_id)
             await self._broadcast(row["session_origin"] or "", "📢【管理员触发世界事件】\n" + text + self._proactive_footer())
             self.db.add_admin_log(group_id, self._web_username() or "web", "event", None, text[:500])
@@ -1316,6 +1369,39 @@ class Main(Star):
             await self._broadcast(row["session_origin"] or "", text + self._proactive_footer())
             self.db.add_admin_log(group_id, self._web_username() or "web", "spawn_boss", None, text[:500])
             return json_response({"ok": True, "message": text, "broadcast": True})
+        if action == "save_settings":
+            raw_payload=payload.get("settings") if isinstance(payload.get("settings"),dict) else {}
+            allowed={"world_weather","world_location","world_event_enabled","explore_enabled","monster_enabled","monster_chance_percent","monster_max_count","monster_multi_chance_percent","npc_enabled","npc_chance_percent","npc_interval_minutes","ai_enabled"}
+            clean={}
+            for k,v in raw_payload.items():
+                if k not in allowed: continue
+                if k in {"world_weather","world_location"}: clean[k]=str(v)[:80]
+                else:
+                    try: clean[k]=int(v)
+                    except Exception: return error_response(f"{k} 必须是整数",status_code=400)
+            if "monster_chance_percent" in clean: clean["monster_chance_percent"]=max(0,min(100,clean["monster_chance_percent"]))
+            if "monster_multi_chance_percent" in clean: clean["monster_multi_chance_percent"]=max(0,min(100,clean["monster_multi_chance_percent"]))
+            if "monster_max_count" in clean: clean["monster_max_count"]=max(1,min(3,clean["monster_max_count"]))
+            if "npc_chance_percent" in clean: clean["npc_chance_percent"]=max(0,min(100,clean["npc_chance_percent"]))
+            if "npc_interval_minutes" in clean: clean["npc_interval_minutes"]=max(5,min(1440,clean["npc_interval_minutes"]))
+            if clean:
+                self.db.update_group(group_id,**clean)
+            self.db.add_admin_log(group_id,self._web_username() or "web","group_settings",None,json.dumps(clean,ensure_ascii=False))
+            return json_response({"ok":True,"message":"本群世界设置已保存。","group":dict(self.db.get_group(group_id))})
+        if action == "spawn_npc":
+            text=self.engine.spawn_npc(group_id)
+            await self._broadcast(row["session_origin"] or "", text + self._proactive_footer())
+            self.db.add_admin_log(group_id,self._web_username() or "web","spawn_npc",None,text[:500])
+            return json_response({"ok":True,"message":text,"broadcast":True})
+        if action == "end_event":
+            self.db.update_group(group_id,current_event_key=None,current_event_expires_at=0,current_event_effects_json="{}")
+            self.db.add_admin_log(group_id,self._web_username() or "web","end_event",None,"clear current event")
+            return json_response({"ok":True,"message":"当前世界事件已结束。"})
+        if action == "clear_npc":
+            self.db.clear_current_npc(group_id)
+            self.db.add_admin_log(group_id,self._web_username() or "web","clear_npc",None,"clear current npc")
+            return json_response({"ok":True,"message":"当前 NPC 已离开。"})
+
         if action == "boss_end":
             if not row["boss_active"]:
                 return json_response({"ok": False, "message": "当前没有 Boss"})
@@ -1382,14 +1468,17 @@ class Main(Star):
             if not isinstance(fields, dict):
                 return error_response("fields 必须是对象", status_code=400)
             clean = {}
-            int_fields = {"level","exp","stamina","max_stamina","luck","renown","streak","total_checkin"}
-            text_fields = {"name","profession","title","tutorial_status"}
+            int_fields = {"level","exp","stamina","max_stamina","luck","renown","streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins","active_pet_id","hp","max_hp"}
+            text_fields = {"name","profession","title","tutorial_status","last_checkin","protected_until","explore_day","last_action_at"}
             for key, value in fields.items():
                 if key in int_fields:
-                    try:
-                        clean[key] = int(value)
-                    except Exception:
-                        return error_response(f"{key} 必须是整数", status_code=400)
+                    if key == "active_pet_id" and (value is None or str(value).strip() == ""):
+                        clean[key] = None
+                    else:
+                        try:
+                            clean[key] = int(value)
+                        except Exception:
+                            return error_response(f"{key} 必须是整数", status_code=400)
                 elif key in text_fields:
                     clean[key] = str(value)[:80]
             if "tutorial_status" in clean and clean["tutorial_status"] not in {"pending","completed","skipped"}:
