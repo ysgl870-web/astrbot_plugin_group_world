@@ -58,7 +58,27 @@ class Database:
             boss_hp INTEGER NOT NULL DEFAULT 0,
             boss_max_hp INTEGER NOT NULL DEFAULT 0,
             boss_started_at TEXT,
-            boss_ends_at TEXT
+            boss_ends_at TEXT,
+            current_event_key TEXT,
+            current_event_expires_at INTEGER NOT NULL DEFAULT 0,
+            current_event_effects_json TEXT NOT NULL DEFAULT '{}',
+            world_event_enabled INTEGER NOT NULL DEFAULT 1,
+            explore_enabled INTEGER NOT NULL DEFAULT 1,
+            monster_enabled INTEGER NOT NULL DEFAULT 1,
+            monster_chance_percent INTEGER NOT NULL DEFAULT 16,
+            monster_max_count INTEGER NOT NULL DEFAULT 3,
+            monster_multi_chance_percent INTEGER NOT NULL DEFAULT 28,
+            npc_enabled INTEGER NOT NULL DEFAULT 1,
+            npc_chance_percent INTEGER NOT NULL DEFAULT 10,
+            npc_interval_minutes INTEGER NOT NULL DEFAULT 120,
+            ai_enabled INTEGER NOT NULL DEFAULT 0,
+            last_npc_at TEXT,
+            current_npc_id TEXT,
+            current_npc_name TEXT,
+            current_npc_role TEXT,
+            current_npc_description TEXT,
+            current_npc_actions_json TEXT NOT NULL DEFAULT '[]',
+            current_npc_expires_at INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS players (
@@ -274,7 +294,7 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT NOT NULL, user_id TEXT NOT NULL,
             monster_id TEXT NOT NULL, monster_name TEXT NOT NULL, hp INTEGER NOT NULL, max_hp INTEGER NOT NULL,
             attack INTEGER NOT NULL DEFAULT 1, defense INTEGER NOT NULL DEFAULT 0, reward_coins INTEGER NOT NULL DEFAULT 0,
-            reward_exp INTEGER NOT NULL DEFAULT 0, reward_items_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'active',
+            reward_exp INTEGER NOT NULL DEFAULT 0, reward_items_json TEXT NOT NULL DEFAULT '{}', skills_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active',
             created_at TEXT NOT NULL, expires_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_monster_encounter_user ON monster_encounters(group_id,user_id,status);
@@ -285,6 +305,17 @@ class Database:
         CREATE TABLE IF NOT EXISTS skill_cooldowns (
             user_id TEXT NOT NULL, skill_id TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(user_id,skill_id)
         );
+
+        CREATE TABLE IF NOT EXISTS npc_interactions (
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            npc_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(group_id,user_id,npc_id,action)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_npc_interactions_group ON npc_interactions(group_id,created_at DESC);
 
         CREATE TABLE IF NOT EXISTS action_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,10 +354,37 @@ class Database:
             for field, sql in migrations.items():
                 if field not in existing:
                     self.conn.execute(sql)
+            monster_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(monster_encounters)").fetchall()}
+            if "skills_json" not in monster_existing:
+                self.conn.execute("ALTER TABLE monster_encounters ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'")
             self.conn.execute("UPDATE players SET max_hp=CASE WHEN max_hp<1 THEN 100 ELSE max_hp END, hp=CASE WHEN hp<0 THEN 0 WHEN hp>max_hp THEN max_hp ELSE hp END")
             group_existing={r[1] for r in self.conn.execute("PRAGMA table_info(groups)").fetchall()}
-            if "last_tip_at" not in group_existing:
-                self.conn.execute("ALTER TABLE groups ADD COLUMN last_tip_at TEXT")
+            group_migrations = {
+                "last_tip_at": "ALTER TABLE groups ADD COLUMN last_tip_at TEXT",
+                "current_event_key": "ALTER TABLE groups ADD COLUMN current_event_key TEXT",
+                "current_event_expires_at": "ALTER TABLE groups ADD COLUMN current_event_expires_at INTEGER NOT NULL DEFAULT 0",
+                "current_event_effects_json": "ALTER TABLE groups ADD COLUMN current_event_effects_json TEXT NOT NULL DEFAULT '{}'",
+                "world_event_enabled": "ALTER TABLE groups ADD COLUMN world_event_enabled INTEGER NOT NULL DEFAULT 1",
+                "explore_enabled": "ALTER TABLE groups ADD COLUMN explore_enabled INTEGER NOT NULL DEFAULT 1",
+                "monster_enabled": "ALTER TABLE groups ADD COLUMN monster_enabled INTEGER NOT NULL DEFAULT 1",
+                "monster_chance_percent": "ALTER TABLE groups ADD COLUMN monster_chance_percent INTEGER NOT NULL DEFAULT 16",
+                "monster_max_count": "ALTER TABLE groups ADD COLUMN monster_max_count INTEGER NOT NULL DEFAULT 3",
+                "monster_multi_chance_percent": "ALTER TABLE groups ADD COLUMN monster_multi_chance_percent INTEGER NOT NULL DEFAULT 28",
+                "npc_enabled": "ALTER TABLE groups ADD COLUMN npc_enabled INTEGER NOT NULL DEFAULT 1",
+                "npc_chance_percent": "ALTER TABLE groups ADD COLUMN npc_chance_percent INTEGER NOT NULL DEFAULT 10",
+                "npc_interval_minutes": "ALTER TABLE groups ADD COLUMN npc_interval_minutes INTEGER NOT NULL DEFAULT 120",
+                "ai_enabled": "ALTER TABLE groups ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 0",
+                "last_npc_at": "ALTER TABLE groups ADD COLUMN last_npc_at TEXT",
+                "current_npc_id": "ALTER TABLE groups ADD COLUMN current_npc_id TEXT",
+                "current_npc_name": "ALTER TABLE groups ADD COLUMN current_npc_name TEXT",
+                "current_npc_role": "ALTER TABLE groups ADD COLUMN current_npc_role TEXT",
+                "current_npc_description": "ALTER TABLE groups ADD COLUMN current_npc_description TEXT",
+                "current_npc_actions_json": "ALTER TABLE groups ADD COLUMN current_npc_actions_json TEXT NOT NULL DEFAULT '[]'",
+                "current_npc_expires_at": "ALTER TABLE groups ADD COLUMN current_npc_expires_at INTEGER NOT NULL DEFAULT 0",
+            }
+            for field, sql in group_migrations.items():
+                if field not in group_existing:
+                    self.conn.execute(sql)
             # Cross-group user migration: keep one canonical profile per platform user.
             self.conn.execute("""INSERT OR IGNORE INTO players(group_id,user_id,name,level,exp,coins,gems,stamina,max_stamina,luck,renown,profession,title,streak,total_checkin,last_checkin,last_stamina_at,banned,protected_until,explore_count,explore_day,active_pet_id,created_at,updated_at,last_seen_at,tutorial_status,tutorial_step,total_explores,total_games,total_work,total_boss_damage,total_earned_coins,total_spent_coins,last_action_at) SELECT '__GLOBAL_USER__',p.user_id,p.name,p.level,p.exp,p.coins,p.gems,p.stamina,p.max_stamina,p.luck,p.renown,p.profession,p.title,p.streak,p.total_checkin,p.last_checkin,p.last_stamina_at,p.banned,p.protected_until,p.explore_count,p.explore_day,p.active_pet_id,p.created_at,p.updated_at,p.last_seen_at,p.tutorial_status,p.tutorial_step,p.total_explores,p.total_games,p.total_work,p.total_boss_damage,p.total_earned_coins,p.total_spent_coins,p.last_action_at FROM players p JOIN (SELECT user_id,MAX(level) AS max_level FROM players WHERE group_id!='__GLOBAL_USER__' GROUP BY user_id) x ON x.user_id=p.user_id AND x.max_level=p.level WHERE p.group_id!='__GLOBAL_USER__'""")
             self.conn.execute("INSERT OR IGNORE INTO inventory(group_id,user_id,item_id,item_name,qty) SELECT '__GLOBAL_USER__',user_id,item_id,item_name,qty FROM inventory WHERE group_id!='__GLOBAL_USER__'")
@@ -798,6 +856,11 @@ class Database:
         allowed = {
             "enabled", "session_origin", "last_event_at", "last_boss_at", "world_weather", "world_location",
             "boss_active", "boss_name", "boss_hp", "boss_max_hp", "boss_started_at", "boss_ends_at",
+            "current_event_key", "current_event_expires_at", "current_event_effects_json", "world_event_enabled",
+            "explore_enabled", "monster_enabled", "monster_chance_percent", "monster_max_count",
+            "monster_multi_chance_percent", "npc_enabled", "npc_chance_percent", "npc_interval_minutes",
+            "ai_enabled", "last_npc_at", "current_npc_id", "current_npc_name", "current_npc_role",
+            "current_npc_description", "current_npc_actions_json", "current_npc_expires_at",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
         if not clean:
@@ -1017,14 +1080,81 @@ class Database:
 
     def create_monster_encounter(self, group_id: str, user_id: str, monster: dict[str, Any], expires_at: int) -> int:
         import json as _json
+        skills = monster.get("skills", []) if isinstance(monster.get("skills", []), list) else []
         with self.transaction() as conn:
-            cur=conn.execute("INSERT INTO monster_encounters(group_id,user_id,monster_id,monster_name,hp,max_hp,attack,defense,reward_coins,reward_exp,reward_items_json,status,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (group_id,user_id,monster.get("id","custom"),monster["name"],monster["hp"],monster["hp"],monster.get("attack",1),monster.get("defense",0),monster.get("coins",0),monster.get("exp",0),_json.dumps(monster.get("items",{}),ensure_ascii=False),"active",utc_now(),expires_at))
+            cur=conn.execute(
+                "INSERT INTO monster_encounters(group_id,user_id,monster_id,monster_name,hp,max_hp,attack,defense,reward_coins,reward_exp,reward_items_json,skills_json,status,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (group_id,user_id,monster.get("id","custom"),monster["name"],monster["hp"],monster["hp"],monster.get("attack",1),monster.get("defense",0),monster.get("coins",0),monster.get("exp",0),_json.dumps(monster.get("items",{}),ensure_ascii=False),_json.dumps(skills,ensure_ascii=False),"active",utc_now(),expires_at),
+            )
             return int(cur.lastrowid)
     def get_active_monster(self, group_id: str, user_id: str) -> Optional[sqlite3.Row]:
         return self.fetchone("SELECT * FROM monster_encounters WHERE group_id=? AND user_id=? AND status='active' AND expires_at>? ORDER BY id DESC LIMIT 1", (group_id,user_id,int(datetime.now(timezone.utc).timestamp())))
     def update_monster(self, encounter_id: int, **fields: Any) -> None:
         fields={k:v for k,v in fields.items() if k in {"hp","status","expires_at"}}
         if fields: self.execute("UPDATE monster_encounters SET "+",".join(f"{k}=?" for k in fields)+" WHERE id=?", (*fields.values(),encounter_id))
+
+    def set_world_event(self, group_id: str, key: str, expires_at: int, effects: dict[str, Any]) -> None:
+        self.update_group(
+            group_id,
+            current_event_key=key,
+            current_event_expires_at=int(expires_at),
+            current_event_effects_json=json.dumps(effects or {}, ensure_ascii=False),
+        )
+
+    def get_active_world_event(self, group_id: str) -> Optional[dict[str, Any]]:
+        row = self.get_group(group_id)
+        if not row or not row["current_event_key"]:
+            return None
+        now = int(datetime.now(timezone.utc).timestamp())
+        if int(row["current_event_expires_at"] or 0) <= now:
+            self.update_group(group_id, current_event_key=None, current_event_expires_at=0, current_event_effects_json="{}")
+            return None
+        try:
+            effects = json.loads(row["current_event_effects_json"] or "{}")
+            if not isinstance(effects, dict):
+                effects = {}
+        except Exception:
+            effects = {}
+        return {"key": row["current_event_key"], "expires_at": int(row["current_event_expires_at"] or 0), "effects": effects}
+
+    def set_current_npc(self, group_id: str, npc: dict[str, Any], expires_at: int) -> None:
+        self.update_group(
+            group_id,
+            current_npc_id=str(npc.get("id", "npc")),
+            current_npc_name=str(npc.get("name", "神秘 NPC")),
+            current_npc_role=str(npc.get("role", "旅人")),
+            current_npc_description=str(npc.get("description", ""))[:1000],
+            current_npc_actions_json=json.dumps(npc.get("actions", []), ensure_ascii=False),
+            current_npc_expires_at=int(expires_at),
+            last_npc_at=utc_now(),
+        )
+
+    def get_current_npc(self, group_id: str) -> Optional[dict[str, Any]]:
+        row = self.get_group(group_id)
+        if not row or not row["current_npc_id"]:
+            return None
+        now = int(datetime.now(timezone.utc).timestamp())
+        if int(row["current_npc_expires_at"] or 0) <= now:
+            self.clear_current_npc(group_id)
+            return None
+        try:
+            actions = json.loads(row["current_npc_actions_json"] or "[]")
+            if not isinstance(actions, list): actions = []
+        except Exception:
+            actions = []
+        return {
+            "id": row["current_npc_id"], "name": row["current_npc_name"], "role": row["current_npc_role"],
+            "description": row["current_npc_description"], "actions": actions, "expires_at": int(row["current_npc_expires_at"] or 0),
+        }
+
+    def clear_current_npc(self, group_id: str) -> None:
+        self.update_group(group_id, current_npc_id=None, current_npc_name=None, current_npc_role=None, current_npc_description=None, current_npc_actions_json="[]", current_npc_expires_at=0)
+
+    def npc_action_claimed(self, group_id: str, user_id: str, npc_id: str, action: str) -> bool:
+        return bool(self.fetchone("SELECT 1 FROM npc_interactions WHERE group_id=? AND user_id=? AND npc_id=? AND action=?", (group_id,user_id,npc_id,action)))
+
+    def mark_npc_action(self, group_id: str, user_id: str, npc_id: str, action: str) -> None:
+        self.execute("INSERT OR IGNORE INTO npc_interactions(group_id,user_id,npc_id,action,created_at) VALUES(?,?,?,?,?)", (group_id,user_id,npc_id,action,utc_now()))
 
     def ensure_invite_code(self, user_id: str, length: int = 6) -> str:
         import secrets, string
@@ -1113,6 +1243,9 @@ class Database:
             "name", "level", "exp", "coins", "gems", "stamina", "max_stamina",
             "luck", "renown", "profession", "title", "streak", "total_checkin",
             "banned", "tutorial_status", "tutorial_step", "hp", "max_hp",
+            "last_checkin", "protected_until", "explore_count", "explore_day", "active_pet_id",
+            "total_explores", "total_games", "total_work", "total_boss_damage", "total_earned_coins",
+            "total_spent_coins", "last_action_at",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
         if not clean:
@@ -1148,6 +1281,13 @@ class Database:
             clean["luck"] = max(0, min(9999, int(clean["luck"])))
         if "renown" in clean:
             clean["renown"] = max(0, min(999999, int(clean["renown"])))
+        for counter in ("streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins"):
+            if counter in clean:
+                clean[counter] = max(0, int(clean[counter]))
+        if "tutorial_step" in clean:
+            clean["tutorial_step"] = min(10, clean["tutorial_step"])
+        if "active_pet_id" in clean and clean["active_pet_id"] is not None:
+            clean["active_pet_id"] = max(0, int(clean["active_pet_id"])) or None
         if "banned" in clean:
             clean["banned"] = 1 if bool(clean["banned"]) else 0
         clean["updated_at"] = utc_now()

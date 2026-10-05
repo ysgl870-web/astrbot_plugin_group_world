@@ -45,16 +45,20 @@ SKILLS = {
     "冰枪": {"name":"冰霜长枪","type":"damage","power":1.45,"cost":12,"cooldown":8,"element":"冰","slow":2,"desc":"冰属性攻击，有机会降低怪物攻击。"},
     "毒刃": {"name":"淬毒之刃","type":"damage","power":1.35,"cost":9,"cooldown":7,"element":"毒","dot":18,"desc":"附加持续伤害。"},
     "雷击": {"name":"落雷","type":"damage","power":2.05,"cost":18,"cooldown":16,"element":"雷","desc":"高爆发雷属性技能。"},
+    "火焰风暴": {"name":"火焰风暴","type":"aoe","power":1.55,"cost":22,"cooldown":18,"element":"火","aoe_ratio":0.85,"desc":"范围攻击，对群体怪物特别有效。"},
+    "雷霆震爆": {"name":"雷霆震爆","type":"aoe","power":1.7,"cost":26,"cooldown":22,"element":"雷","aoe_ratio":0.9,"desc":"范围雷击，拥有小概率震慑敌人。"},
 }
 
 MONSTER_TEMPLATES = {
-    "slime": {"name":"软泥怪","hp":220,"attack":28,"defense":4,"coins":180,"exp":90,"items":{"slime_core":1}},
-    "wolf": {"name":"森林野狼","hp":360,"attack":42,"defense":8,"coins":280,"exp":150,"items":{"wolf_fang":1}},
-    "goblin": {"name":"贪财哥布林","hp":500,"attack":55,"defense":12,"coins":520,"exp":240,"items":{"goblin_ear":1,"ore":1}},
-    "skeleton": {"name":"荒漠骷髅","hp":620,"attack":68,"defense":18,"coins":700,"exp":330,"items":{"bone":2,"ore":1}},
-    "ice_beast": {"name":"冰原兽","hp":900,"attack":92,"defense":26,"coins":1100,"exp":520,"items":{"ice_core":1,"crystal":1}},
-    "lava_hound": {"name":"熔岩猎犬","hp":1250,"attack":120,"defense":34,"coins":1600,"exp":760,"items":{"lava_core":1,"ore":3}},
-    "void_watcher": {"name":"虚空凝视者","hp":1800,"attack":155,"defense":45,"coins":2400,"exp":1200,"items":{"void_fragment":1,"crystal":2}},
+    "slime": {"name":"软泥怪","hp":220,"attack":28,"defense":4,"coins":180,"exp":90,"items":{"slime_core":1},"skills":[{"name":"黏液喷射","multiplier":1.20,"chance":25,"text":"减速黏液溅射，造成额外伤害！","aoe":False}]},
+    "wolf": {"name":"森林野狼","hp":360,"attack":42,"defense":8,"coins":280,"exp":150,"items":{"wolf_fang":1},"skills":[{"name":"群狼扑袭","multiplier":1.28,"chance":30,"text":"狼群协同扑袭，波及附近冒险者！","aoe":True}]},
+    "goblin": {"name":"贪财哥布林","hp":500,"attack":55,"defense":12,"coins":520,"exp":240,"items":{"goblin_ear":1,"ore":1},"skills":[{"name":"零钱炸弹","multiplier":1.32,"chance":26,"text":"把金币做成爆弹砸向你！","aoe":False}]},
+    "skeleton": {"name":"荒漠骷髅","hp":620,"attack":68,"defense":18,"coins":700,"exp":330,"items":{"bone":2,"ore":1},"skills":[{"name":"骨矛齐射","multiplier":1.38,"chance":28,"text":"骨矛从四面八方射来！","aoe":True}]},
+    "ice_beast": {"name":"冰原兽","hp":900,"attack":92,"defense":26,"coins":1100,"exp":520,"items":{"ice_core":1,"crystal":1},"skills":[{"name":"冰川震击","multiplier":1.45,"chance":32,"text":"冰霜震波席卷战场！","aoe":True}]},
+    "lava_hound": {"name":"熔岩猎犬","hp":1250,"attack":120,"defense":34,"coins":1600,"exp":760,"items":{"lava_core":1,"ore":3},"skills":[{"name":"熔岩喷吐","multiplier":1.50,"chance":34,"text":"灼热熔岩喷向多人！","aoe":True}]},
+    "void_watcher": {"name":"虚空凝视者","hp":1800,"attack":155,"defense":45,"coins":2400,"exp":1200,"items":{"void_fragment":1,"crystal":2},"skills":[{"name":"虚空撕裂","multiplier":1.55,"chance":28,"text":"扭曲空间造成额外范围伤害！","aoe":True}]},
+    "flame_imp": {"name":"炎魔小鬼","hp":760,"attack":105,"defense":20,"coins":980,"exp":430,"items":{"lava_core":1},"skills":[{"name":"火焰喷射","multiplier":1.45,"chance":35,"text":"喷出火焰，造成额外伤害！","aoe":False}]},
+    "thunder_hawk": {"name":"雷翼鹰","hp":1100,"attack":132,"defense":29,"coins":1450,"exp":690,"items":{"crystal":1,"feather":2},"skills":[{"name":"雷羽风暴","multiplier":1.6,"chance":30,"text":"召来雷电进行范围打击！","aoe":True}]},
 }
 LOCATIONS = [
     ("新手村", 1, "安全、稳定，适合新人"),
@@ -153,11 +157,32 @@ class WorldEngine:
         except Exception:
             return default or {}
 
+    def _active_world_event(self, group_id: str) -> dict[str, Any] | None:
+        try:
+            return self.db.raw.get_active_world_event(group_id) if hasattr(self.db, "raw") else self.db.get_active_world_event(group_id)
+        except Exception:
+            return None
+
+    def _event_effect(self, group_id: str, key: str, default: Any = 0) -> Any:
+        event = self._active_world_event(group_id)
+        if not event:
+            return default
+        return event.get("effects", {}).get(key, default)
+
     def group_enabled(self, group_id: str) -> bool:
         disabled = {x.strip() for x in str(self.config.get("disabled_group_ids", "")).split(",") if x.strip()}
         if group_id in disabled:
             return False
+        row = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
+        if row and not bool(row["enabled"]):
+            return False
         return bool(self.cfg("enabled", group_id, True))
+
+    def group_feature_enabled(self, group_id: str, field: str, config_key: str, default: bool = True) -> bool:
+        row = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
+        if row is not None and field in row.keys() and row[field] is not None:
+            return bool(row[field])
+        return bool(self.cfg(config_key, group_id, default))
 
     def ensure_player(self, group_id: str, user_id: str, name: str):
         # Player-owned data is global across groups. The group only records membership/world state.
@@ -340,6 +365,7 @@ class WorldEngine:
             coins = int(coins * 1.3)
         streak_bonus = min(int(self.cfg("checkin_streak_bonus_cap", group_id, 1000)), max(0, streak - 1) * int(self.cfg("checkin_streak_bonus_per_day", group_id, 15)))
         coins += streak_bonus
+        coins += max(0, int(self._event_effect(group_id, "checkin_bonus_coins", 0) or 0))
         self.db.wallet_change(group_id, user_id, coins_delta=coins, kind="checkin", note=f"连续签到{streak}天")
         self.db.execute(
             "UPDATE players SET streak=?,total_checkin=total_checkin+1,last_checkin=?,title=?,updated_at=? WHERE group_id=? AND user_id=?",
@@ -370,8 +396,8 @@ class WorldEngine:
         limit = int(self.cfg("explore_daily_limit", group_id, 20))
         if count >= limit:
             return Result(f"🗺️ 今日探索次数已达到上限：{limit} 次。")
-        if not bool(self.cfg("explore_enabled", group_id, True)):
-            return Result("🗺️ 管理员已关闭探索系统。")
+        if not self.group_feature_enabled(group_id, "explore_enabled", "explore_enabled", True):
+            return Result("🗺️ 管理员已关闭本群探索系统。")
         base_cost = int(self.cfg("explore_stamina_cost", group_id, 10))
         cost = base_cost
         if mode == "deep":
@@ -380,6 +406,8 @@ class WorldEngine:
             cost = base_cost + int(self.cfg("explore_danger_extra_cost", group_id, 25))
         if player["profession"] == "探险家":
             cost = max(1, cost - 2)
+        rain_extra = int(self._event_effect(group_id, "explore_stamina_extra", 0) or 0)
+        cost += max(0, rain_extra)
         if player["stamina"] < cost:
             return Result(f"❤️ 体力不足，需要 {cost} 点，当前 {player['stamina']} 点。")
         self.db.change_stamina(group_id, user_id, -cost)
@@ -388,11 +416,14 @@ class WorldEngine:
         equip = self.db.get_equipped_stats(group_id, user_id)
         rare_boost = 4 if player["profession"] == "刺客" else 0
         fortune_boost = player["luck"] * 0.35
-        rare_threshold = max(0.1, float(self.cfg("explore_rare_bonus_percent", group_id, 6)) + rare_boost + fortune_boost)
+        rare_threshold = max(0.1, float(self.cfg("explore_rare_bonus_percent", group_id, 6)) + rare_boost + fortune_boost + float(self._event_effect(group_id, "explore_gem_bonus_percent", 0) or 0))
         danger_threshold = max(rare_threshold + 1, float(self.cfg("explore_danger_percent", group_id, 10)) + 18)
         lines = [f"🗺️ 你进入了【{loc[0]}】。", f"难度：{'⭐' * loc[1]}"]
         exp_gain = random.randint(70, 160) + loc[1] * 20
         coins_gain = int(random.randint(80, 260) * max(1, loc[1] // 2) * float(self.cfg("explore_reward_multiplier", group_id, 1.0)))
+        coins_gain = int(coins_gain * float(self._event_effect(group_id, "explore_coin_multiplier", 1.0) or 1.0))
+        if self._event_effect(group_id, "location_reward_location", "") == loc[0]:
+            coins_gain = int(coins_gain * float(self._event_effect(group_id, "location_reward_multiplier", 1.0) or 1.0))
         item_text = ""
         if event_roll < rare_threshold:
             gems = random.randint(1, 4 if loc[1] >= 4 else 2)
@@ -409,8 +440,12 @@ class WorldEngine:
             item_text = f"\n🎁 获得：{item_name} ×{qty}"
             exp_gain += 80
         elif event_roll < danger_threshold:
-            monster_chance=float(self.cfg("explore_monster_chance_percent",group_id,16)) + loc[1]*1.5
-            if random.random()*100 < monster_chance and bool(self.cfg("monster_enabled",group_id,True)):
+            monster_base = float(self.cfg("explore_monster_chance_percent",group_id,16))
+            row_group = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
+            if row_group is not None and row_group["monster_chance_percent"] is not None:
+                monster_base = float(row_group["monster_chance_percent"])
+            monster_chance = monster_base + loc[1]*1.5 + float(self._event_effect(group_id, "monster_chance_bonus_percent", 0) or 0)
+            if random.random()*100 < monster_chance and self.group_feature_enabled(group_id, "monster_enabled", "monster_enabled", True):
                 # Monster encounter is persisted, so the next command can continue safely.
                 item_text = "\n" + self._spawn_monster(group_id,user_id)
                 exp_gain += 30
@@ -520,12 +555,24 @@ class WorldEngine:
         choices=list(templates.items())
         monster_id, monster_base=random.choice(choices)
         monster=dict(monster_base); monster.setdefault("id",monster_id)
-        # scale slightly with player level so early monsters remain meaningful
         p,_=self.ensure_player(group_id,user_id,"冒险者")
         scale=1+max(0,int(p["level"])-1)*0.025
-        monster["hp"]=max(1,int(monster["hp"]*scale)); monster["attack"]=max(1,int(monster["attack"]*scale))
+        row_group = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
+        max_count = int(row_group["monster_max_count"] if row_group and row_group["monster_max_count"] is not None else self.cfg("explore_monster_max_count", group_id, 3))
+        multi_chance = float(row_group["monster_multi_chance_percent"] if row_group and row_group["monster_multi_chance_percent"] is not None else self.cfg("explore_monster_multi_chance_percent", group_id, 28))
+        count = 1
+        if max_count > 1 and random.random() * 100 < max(0, min(100, multi_chance)):
+            count = random.randint(2, max(2, min(max_count, 3)))
+        monster["hp"]=max(1,int(monster["hp"]*scale*count)); monster["attack"]=max(1,int(monster["attack"]*scale*(1+0.08*(count-1))))
+        monster["coins"]=max(0,int(monster.get("coins",0)*count)); monster["exp"]=max(0,int(monster.get("exp",0)*count))
+        if isinstance(monster.get("items"),dict): monster["items"]={k:int(v)*count for k,v in monster["items"].items()}
+        if count>1:
+            monster["name"]=f"{monster['name']}群 ×{count}"
+        monster["enemy_count"]=count
         encounter_id=self.db.raw.create_monster_encounter(group_id,user_id,monster,utc_ts()+int(self.cfg("monster_encounter_minutes",group_id,15))*60) if hasattr(self.db,"raw") else self.db.create_monster_encounter(group_id,user_id,monster,utc_ts()+900)
-        return f"👹【遭遇战 #{encounter_id}】\n{monster['name']} 出现了！\n❤️ HP：{monster['hp']}\n⚔️ 攻击：{monster['attack']}｜🛡️ 防御：{monster.get('defense',0)}\n\n输入 `/攻击怪物` 普攻，或 `/技能使用 技能名`。\n15 分钟内不战斗，怪物会逃跑。"
+        skills = monster.get("skills") or []
+        skill_note = f"\n✨ 特性：{skills[0].get('name')}（敌人有概率施放）" if skills and isinstance(skills[0], dict) else ""
+        return f"👹【遭遇战 #{encounter_id}】\n{monster['name']} 出现了！\n❤️ HP：{monster['hp']}\n⚔️ 攻击：{monster['attack']}｜🛡️ 防御：{monster.get('defense',0)}{skill_note}\n\n输入 `/攻击怪物` 普攻，或 `/技能使用 技能名`。\n15 分钟内不战斗，怪物会逃跑。"
 
     def monster_flee(self,group_id:str,user_id:str,name:str)->str:
         row=self.db.get_active_monster(group_id,user_id)
@@ -556,7 +603,10 @@ class WorldEngine:
         if cost: self.db.change_stamina(group_id,user_id,-cost)
         eq=self.db.get_equipped_stats(group_id,user_id); pet=self.db.get_active_pet(group_id,user_id)
         base=random.randint(45,75)+int(p["level"])*16+eq["attack"]+(int(pet["attack"])*2 if pet else 0)
-        damage=max(1,int(base*float(skill.get("power",1.0)))-int(row["defense"]))
+        multiplier=float(skill.get("power",1.0))
+        if skill.get("type") == "aoe":
+            multiplier *= float(skill.get("aoe_ratio",0.85) or 0.85) + 0.15
+        damage=max(1,int(base*multiplier)-int(row["defense"]))
         if random.random()<0.08+p["luck"]/600: damage*=2; crit=True
         else: crit=False
         # tiny skill bonds: element pairs and profession synergy
@@ -578,15 +628,48 @@ class WorldEngine:
             got=[]
             for iid,qty in items.items(): self.db.add_item(group_id,user_id,iid,iid,int(qty)); got.append(f"{iid}×{qty}")
             return Result(f"🏆 击败【{row['monster_name']}】！\n⚔️ {damage} 伤害{'｜暴击' if crit else ''}\n💰 +{coins}｜⭐ +{exp}\n🎒 材料：{'、'.join(got) if got else '无'}"+ (f"\n🎉 升级至 Lv.{player['level']}！" if ups else '') + (f"\n✨ {bond_text}" if bond_text else ''),ups)
-        # monster counterattack
+        # Monster counterattack, with optional enemy skills stored on the encounter.
         defense=eq["defense"]+(pet["defense"] if pet else 0)
-        taken=max(1,int(row["attack"]*random.uniform(.75,1.1))-defense//3)
-        self.db.change_hp(group_id,user_id,-taken)
+        try:
+            enemy_skills=json.loads(row["skills_json"] or "[]") if "skills_json" in row.keys() else []
+        except Exception:
+            enemy_skills=[]
+        enemy_skill = None
+        if isinstance(enemy_skills, list):
+            available=[x for x in enemy_skills if isinstance(x,dict) and str(x.get("name"))]
+            weighted=[x for x in available if random.random()*100 < max(0,min(100,float(x.get("chance",0) or 0)))]
+            enemy_skill=random.choice(weighted) if weighted else None
+        base_taken=max(1,int(row["attack"]*random.uniform(.75,1.1))-defense//3)
+        taken=max(1,int(base_taken*float(enemy_skill.get("multiplier",1.0))) if enemy_skill else base_taken)
+        enemy_text=f"✨ 【{enemy_skill['name']}】！{enemy_skill.get('text','')}" if enemy_skill else ""
+        group_extra=""
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        if enemy_skill and bool(enemy_skill.get("aoe",False)):
+            members=raw.fetchall("SELECT user_id FROM group_members WHERE group_id=? ORDER BY last_seen_at DESC LIMIT 10", (group_id,))
+            targets=[]
+            for r in members:
+                uid=str(r["user_id"])
+                if uid==user_id or random.random()<0.25:
+                    targets.append(uid)
+            if user_id not in targets: targets.insert(0,user_id)
+            targets=targets[:3]
+            extra=[]
+            for uid in targets:
+                if uid==user_id:
+                    hit=taken
+                else:
+                    other_eq=raw.get_equipped_stats(group_id,uid) if hasattr(raw,"get_equipped_stats") else {"defense":0}
+                    hit=max(1,taken-int(other_eq.get("defense",0))//5)
+                self.db.change_hp(group_id,uid,-hit)
+                if uid!=user_id: extra.append(f"• 波及 {uid}：-{hit} HP")
+            if extra: group_extra="\n"+"\n".join(extra)
+        else:
+            self.db.change_hp(group_id,user_id,-taken)
         hp_now=self.db.get_player("__GLOBAL_USER__",user_id)["hp"]
         if hp_now<=0:
             self.db.stop_auto_battle(group_id,user_id)
-            return Result(f"💀 你被【{row['monster_name']}】击倒了！\n❤️ 战斗生命：0/{p['max_hp']}\n建议使用 `/使用 potion 1` 恢复，恢复后再继续战斗。")
-        return Result(f"⚔️ 你用【{skill_id}】造成 {damage} 伤害{'｜暴击' if crit else ''}。\n👹 {row['monster_name']} 剩余 HP：{hp}\n💥 怪物反击，你损失 {taken} 战斗生命。"+(f"\n✨ {bond_text}" if bond_text else '')+"\n\n下一步：继续 `/攻击怪物` 或 `/技能使用 技能名`；也可以 `/自动战斗 开启`。\n输入 `/怪物` 查看完整状态。")
+            return Result(f"💀 你被【{row['monster_name']}】击倒了！\n❤️ 战斗生命：0/{p['max_hp']}\n{enemy_text}\n建议使用 `/使用 potion 1` 恢复，恢复后再继续战斗。")
+        return Result(f"⚔️ 你用【{skill_id}】造成 {damage} 伤害{'｜暴击' if crit else ''}。\n👹 {row['monster_name']} 剩余 HP：{hp}\n💥 怪物反击，你损失 {taken} 战斗生命。{group_extra}\n{enemy_text}"+(f"\n✨ {bond_text}" if bond_text else '')+"\n\n下一步：继续 `/攻击怪物` 或 `/技能使用 技能名`；也可以 `/自动战斗 开启`。\n输入 `/怪物` 查看完整状态。")
 
     def _skill_damage(self, player, eq, pet, skill_id, equipped, target_defense=0):
         skill=SKILLS[skill_id]
@@ -623,13 +706,47 @@ class WorldEngine:
         if hp<=0:
             return Result(self.finish_boss(group_id,user_id),ups)
         # Boss retaliates after every successful hit.
-        taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
-        self.db.change_hp(group_id,user_id,-taken)
+        boss_skill_text = ""
+        boss_aoe = random.random() * 100 < max(0, min(100, int(self.cfg("boss_skill_chance_percent", group_id, 22) or 22)))
+        if boss_aoe:
+            boss_skill = random.choice([
+                ("灭世震波", 1.55, "范围伤害！"),
+                ("寒霜领域", 1.30, "范围减伤压制！"),
+                ("地狱烈焰", 1.70, "爆发范围灼烧！"),
+            ])
+            taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
+            taken=int(taken*boss_skill[1])
+            boss_skill_text=f" 🐉 Boss 施放【{boss_skill[0]}】造成{boss_skill[2]}"
+            # Hit up to three currently active group members, but always include the acting player.
+            raw=self.db.raw if hasattr(self.db, "raw") else self.db
+            members=raw.fetchall("SELECT user_id FROM group_members WHERE group_id=? ORDER BY last_seen_at DESC LIMIT 12", (group_id,))
+            targets=[]
+            for r in members:
+                uid=str(r["user_id"])
+                if uid == user_id or random.random() < 0.28:
+                    targets.append(uid)
+            if user_id not in targets: targets.insert(0,user_id)
+            targets=targets[:3]
+            extra_lines=[]
+            for uid in targets:
+                if uid==user_id:
+                    hit=taken
+                else:
+                    other_eq=raw.get_equipped_stats(group_id,uid) if hasattr(raw,"get_equipped_stats") else {"defense":0}
+                    hit=max(1,taken-int(other_eq.get("defense",0))//5)
+                self.db.change_hp(group_id,uid,-hit)
+                if uid != user_id: extra_lines.append(f"• 影响了 {uid}：-{hit} HP")
+            group_extra = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
+        else:
+            taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
+            group_extra = ""
+            self.db.change_hp(group_id,user_id,-taken)
         hp_now=self.db.get_player("__GLOBAL_USER__",user_id)["hp"]
         if hp_now<=0:
             self.db.stop_auto_battle(group_id,user_id)
             return Result(f"💀 Boss 将你击倒了！\n❤️ 战斗生命：0/{p['max_hp']}\n建议使用 `/使用 potion 1` 恢复生命后再继续。")
-        return Result(f"⚔️ 你使用【{skill_id}】对 Boss 造成 {fmt_num(damage)} 点伤害{'｜暴击' if crit else ''}。\n🐉 Boss HP：{fmt_num(hp)}/{fmt_num(group['boss_max_hp'])}\n💥 Boss 反击，你损失 {taken} 战斗生命。\n⭐ +{xp} EXP" + (f"\n✨ {bond_text}" if bond_text else '') + "\n\n下一步：可继续 `/技能使用 技能名`、`/攻击`，或开启 `/自动战斗 Boss`。",ups)
+        impact = f"\n🐉 {boss_skill_text}" if boss_skill_text else ""
+        return Result(f"⚔️ 你使用【{skill_id}】对 Boss 造成 {fmt_num(damage)} 点伤害{'｜暴击' if crit else ''}。\n🐉 Boss HP：{fmt_num(hp)}/{fmt_num(group['boss_max_hp'])}{impact}\n💥 Boss 反击，你损失 {taken} 战斗生命。{group_extra}\n⭐ +{xp} EXP" + (f"\n✨ {bond_text}" if bond_text else '') + "\n\n下一步：可继续 `/技能使用 技能名`、`/攻击`，或开启 `/自动战斗 Boss`。",ups)
 
     def auto_battle_start(self, group_id:str,user_id:str,name:str,target:str="") -> str:
         if not bool(self.cfg("auto_battle_enabled",group_id,True)):
@@ -824,46 +941,61 @@ class WorldEngine:
             return "❌ 找不到这个宠物。"
         return f"🐾 已让【{pet['species']}】出战。\n⚔️ 攻击：{pet['attack']}\n🛡️ 防御：{pet['defense']}\n🍀 幸运：{pet['luck']}"
 
-    def shop_text(self, group_id: str) -> str:
-        if not bool(self.cfg("shop_enabled", group_id, True)):
-            return "🏪 管理员已关闭世界商店。"
+    def _shop_catalog(self, group_id: str) -> dict[str, tuple[str, int, str]]:
         catalog = dict(SHOP)
         custom = self.json_cfg("shop_catalog_json", group_id)
         for item_id, value in custom.items():
             if isinstance(value, list) and len(value) >= 3:
                 try:
-                    catalog[item_id] = (str(value[0]), int(value[1]), str(value[2]))
+                    catalog[str(item_id)] = (str(value[0]), int(value[1]), str(value[2]))
                 except Exception:
                     pass
+        return catalog
+
+    def _shop_unit_price(self, group_id: str, player, base_price: int) -> tuple[int, dict[str, int]]:
+        profession_discount = 10 if str(player["profession"] or "") == "商人" else 0
+        global_discount = max(0, min(90, int(self.cfg("shop_discount_percent", group_id, 0) or 0)))
+        event_discount = max(0, min(90, int(self._event_effect(group_id, "shop_discount_percent", 0) or 0)))
+        # Apply independent discounts sequentially; every place that displays or
+        # charges a price calls this function so event prices cannot drift.
+        multiplier = (1 - profession_discount / 100) * (1 - global_discount / 100) * (1 - event_discount / 100)
+        price = max(1, int(int(base_price) * multiplier))
+        return price, {"profession": profession_discount, "global": global_discount, "event": event_discount}
+
+    def shop_text(self, group_id: str) -> str:
+        if not bool(self.cfg("shop_enabled", group_id, True)):
+            return "🏪 管理员已关闭世界商店。"
+        catalog = self._shop_catalog(group_id)
+        # The world shop is public; profession/event discounts are calculated
+        # against the viewer's role where possible. Default display uses no profession discount.
         lines = ["🏪 【世界商店】", ""]
-        for item_id, (name, price, desc) in catalog.items():
-            price = int(price * (1 - int(self.cfg("shop_discount_percent", group_id, 0)) / 100))
-            lines.append(f"{item_id}｜{name}｜💰 {price}｜{desc}")
-        lines.append("\n购买：`/购买 物品ID 数量`")
+        group_event_discount = max(0, min(90, int(self._event_effect(group_id, "shop_discount_percent", 0) or 0)))
+        global_discount = max(0, min(90, int(self.cfg("shop_discount_percent", group_id, 0) or 0)))
+        for item_id, (name, base_price, desc) in catalog.items():
+            multiplier = (1 - global_discount / 100) * (1 - group_event_discount / 100)
+            price = max(1, int(int(base_price) * multiplier))
+            discount_note = []
+            if global_discount: discount_note.append(f"全局-{global_discount}%")
+            if group_event_discount: discount_note.append(f"事件-{group_event_discount}%")
+            note = f"（{'；'.join(discount_note)}）" if discount_note else ""
+            lines.append(f"{item_id}｜{name}｜💰 {price}｜{desc}{note}")
+        lines.append("\n购买：`/购买 物品ID 数量`；职业‘商人’购买时再额外享受 10% 折扣。")
         return "\n".join(lines)
 
     def buy(self, group_id: str, user_id: str, name: str, item_id: str, qty: int) -> str:
         if not bool(self.cfg("shop_enabled", group_id, True)):
             return "🏪 管理员已关闭世界商店。"
         player, _ = self.ensure_player(group_id, user_id, name)
-        catalog = dict(SHOP)
-        custom = self.json_cfg("shop_catalog_json", group_id)
-        for custom_id, value in custom.items():
-            if isinstance(value, list) and len(value) >= 3:
-                try:
-                    catalog[custom_id] = (str(value[0]), int(value[1]), str(value[2]))
-                except Exception:
-                    pass
+        catalog = self._shop_catalog(group_id)
         if item_id not in catalog:
             return "❌ 商店里没有这个物品。发送 `/商店` 查看。"
-        qty = max(1, min(99, qty))
+        qty = max(1, min(99, int(qty)))
         item_name, base_price, desc = catalog[item_id]
-        discount = 0.9 if player["profession"] == "商人" else 1.0
-        global_discount = max(0.0, min(0.95, int(self.cfg("shop_discount_percent", group_id, 0)) / 100))
-        price = int(base_price * discount * (1 - global_discount)) * qty
+        unit_price, discounts = self._shop_unit_price(group_id, player, base_price)
+        price = unit_price * qty
         if player["coins"] < price:
             return f"💰 金币不足，需要 {fmt_num(price)}，当前 {fmt_num(player['coins'])}。"
-        self.db.wallet_change(group_id, user_id, coins_delta=-price, kind="shop", note=f"购买{item_name}×{qty}")
+        self.db.wallet_change(group_id, user_id, coins_delta=-price, kind="shop", note=f"购买{item_name}×{qty}" )
         if item_id == "potion":
             self.db.change_stamina(group_id, user_id, 25 * qty)
         elif item_id == "super_potion":
@@ -871,9 +1003,16 @@ class WorldEngine:
         elif item_id == "food":
             self.db.change_stamina(group_id, user_id, 10 * qty); self.db.change_hp(group_id,user_id,10*qty)
             self.db.change_exp(group_id, user_id, 40 * qty)
+        elif item_id == "energy_drink":
+            self.db.change_stamina(group_id, user_id, 50 * qty); self.db.change_exp(group_id, user_id, 100 * qty)
         else:
             self.db.add_item(group_id, user_id, item_id, item_name, qty)
-        return f"✅ 购买成功：{item_name} ×{qty}\n💰 消耗：{fmt_num(price)}\n📦 {desc}"
+        discount_note = []
+        if discounts["profession"]: discount_note.append("商人 -10%")
+        if discounts["global"]: discount_note.append(f"全局 -{discounts['global']}%")
+        if discounts["event"]: discount_note.append(f"事件 -{discounts['event']}%")
+        extra = f"\n🏷️ {' + '.join(discount_note)}" if discount_note else ""
+        return f"✅ 购买成功：{item_name} ×{qty}\n💰 消耗：{fmt_num(price)}{extra}\n📦 {desc}"
 
     def equip(self, group_id: str, user_id: str, equip_id: int, name: str) -> str:
         self.ensure_player(group_id, user_id, name)
@@ -1075,6 +1214,68 @@ class WorldEngine:
             lines.append("\n💎 终结者额外获得：2 钻石")
         return "\n".join(lines)
 
+    NPC_TEMPLATES = [
+        {"id":"merchant","name":"米娅","role":"流浪商人","description":"她推着装满药剂与矿石的小车路过这里。","actions":[{"key":"trade","label":"看一眼特价货架","reward":"coins"},{"key":"talk","label":"和她聊聊","reward":"exp"}]},
+        {"id":"fortune","name":"璃月","role":"占星师","description":"她说今晚的星星格外愿意照顾冒险者。","actions":[{"key":"fortune","label":"进行一次占卜","reward":"luck"},{"key":"talk","label":"听她讲故事","reward":"exp"}]},
+        {"id":"hunter","name":"洛克","role":"老猎人","description":"他刚从黑森林回来，手里还拎着一串狼牙。","actions":[{"key":"hunt","label":"接下猎人赠礼","reward":"item"},{"key":"talk","label":"听取狩猎技巧","reward":"exp"}]},
+        {"id":"collector","name":"阿格斯","role":"收藏家","description":"只要是稀奇古怪的材料，他都愿意出钱收。","actions":[{"key":"trade","label":"拿材料换金币","reward":"coins"},{"key":"talk","label":"展示你的收藏","reward":"renown"}]},
+        {"id":"traveler","name":"伊恩","role":"远行者","description":"他正在寻找下一条前往虚空领域的路线。","actions":[{"key":"quest","label":"接受旅行者赠礼","reward":"item"},{"key":"talk","label":"听地图情报","reward":"exp"}]},
+    ]
+
+    def spawn_npc(self, group_id: str) -> str:
+        if not self.group_feature_enabled(group_id,"npc_enabled","npc_enabled",True):
+            return "🧑‍🌾 本群随机 NPC 系统当前已关闭。"
+        npc=random.choice(self.NPC_TEMPLATES)
+        duration=max(5,int(self.cfg("npc_duration_minutes",group_id,30)))
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        raw.set_current_npc(group_id,npc, int(time.time())+duration*60)
+        options=" ｜ ".join(f"{i+1}.{a['label']}" for i,a in enumerate(npc['actions']))
+        raw.log_world_event(group_id,"npc",npc["name"],npc["description"],None,"NPC",group_id)
+        return f"🧑‍🌾【神秘 NPC 出现】\n{npc['name']}（{npc['role']}）来到了群聊世界！\n{npc['description']}\n\n可互动：{options}\n发送 `/NPC` 查看详情。\n⏳ NPC 将停留约 {duration} 分钟。"
+
+    def npc_status(self, group_id: str) -> str:
+        npc=self.db.raw.get_current_npc(group_id) if hasattr(self.db,"raw") else self.db.get_current_npc(group_id)
+        if not npc:
+            return "🧑‍🌾 当前没有 NPC。等待世界随机事件即可。"
+        remain=max(1,(npc["expires_at"]-int(time.time()))//60)
+        options="\n".join(f"{i+1}. `/NPC {a['key']}` — {a['label']}" for i,a in enumerate(npc["actions"]))
+        return f"🧑‍🌾【{npc['name']} · {npc['role']}】\n{npc['description']}\n\n{options}\n\n⏳ 剩余约 {remain} 分钟"
+
+    def npc_interact(self, group_id: str, user_id: str, name: str, action: str) -> str:
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        npc=raw.get_current_npc(group_id)
+        if not npc:
+            return "🧑‍🌾 当前没有可互动的 NPC。"
+        key=(action or "talk").strip().lower()
+        mapping={str(a.get("key")):a for a in npc.get("actions",[])}
+        if key.isdigit():
+            idx=int(key)-1
+            acts=npc.get("actions",[])
+            if 0<=idx<len(acts): key=str(acts[idx].get("key"))
+        act=mapping.get(key)
+        if not act:
+            return self.npc_status(group_id)
+        if raw.npc_action_claimed(group_id,user_id,npc["id"],key):
+            return "🧑‍🌾 这位 NPC 已经给过你这份奖励了。试试其他互动选项。"
+        player,_=self.ensure_player(group_id,user_id,name)
+        reward=act.get("reward")
+        raw.mark_npc_action(group_id,user_id,npc["id"],key)
+        if reward=="coins":
+            gain=random.randint(600,1600); raw.wallet_change(group_id,user_id,coins_delta=gain,kind="npc",note=f"NPC {npc['name']} 交换")
+            return f"🧑‍🌾 {npc['name']}：不错的材料！我愿意支付 💰{gain}。\n你的互动已完成。"
+        if reward=="item":
+            iid,iname,qty=random.choice([("potion","体力药水",1),("ore","强化矿石",2),("food","冒险便当",2),("crystal","强化水晶",1)])
+            raw.add_item(group_id,user_id,iid,iname,qty)
+            return f"🎁 {npc['name']} 送给你【{iname}】 ×{qty}。\n你的互动已完成。"
+        if reward=="luck":
+            raw.set_global_player_fields(user_id,{"luck":min(9999,int(player["luck"])+3)})
+            return f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{int(player['luck'])+3}"
+        if reward=="renown":
+            raw.set_global_player_fields(user_id,{"renown":min(999999,int(player["renown"])+20)})
+            return f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{int(player['renown'])+20}"
+        gain=random.randint(120,320); raw.change_exp(group_id,user_id,gain)
+        return f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
+
     def random_tip(self, group_id: str) -> str:
         tips=[
             "💡 小提示：第一次进入玩法，建议按 `/签到 → /任务 → /探索` 的顺序开始。",
@@ -1103,26 +1304,48 @@ class WorldEngine:
         return random.choice(tips)
 
     def random_world_event(self, group_id: str) -> str:
+        if not self.group_feature_enabled(group_id, "world_event_enabled", "enable_auto_world_events", True):
+            return "🌤️ 本群世界事件系统当前已关闭。"
         custom = self.json_cfg("event_catalog_json", group_id)
         choices = []
         if custom:
             for key, value in custom.items():
                 if isinstance(value, str):
-                    choices.append((str(key), value, {"weather": str(key)}))
+                    choices.append({"key":str(key),"title":str(key),"description":value,"weather":str(key),"duration":60,"effects":{}})
                 elif isinstance(value, dict) and value.get("description"):
-                    choices.append((str(value.get("title",key)), str(value["description"]), {"weather": str(value.get("weather","特殊天气"))}))
+                    effects=value.get("effects", {}) if isinstance(value.get("effects", {}), dict) else {}
+                    # Accept effects directly on the event for easier admin editing.
+                    for k in ("shop_discount_percent","explore_coin_multiplier","explore_stamina_extra","explore_gem_bonus_percent","checkin_bonus_coins","monster_chance_bonus_percent","location_reward_location","location_reward_multiplier"):
+                        if k in value: effects[k]=value[k]
+                    choices.append({"key":str(key),"title":str(value.get("title",key)),"description":str(value["description"]),"weather":str(value.get("weather","特殊天气")),"duration":int(value.get("duration_minutes",60) or 60),"effects":effects})
         if not choices:
             choices = [
-            ("☔ 暴雨", "今日世界进入暴雨天气！探索金币 +20%，但探索额外消耗 2 体力。", {"weather": "暴雨"}),
-            ("☀️ 晴空", "阳光普照！全群玩家今天第一次签到额外获得 100 金币。", {"weather": "晴天"}),
-            ("🌌 流星雨", "流星划过天空！下一次探索更容易找到钻石。", {"weather": "流星雨"}),
-            ("🌋 火山异动", "火山开始震动！熔岩火山区域奖励提高。", {"weather": "火山异动"}),
-            ("🐺 狼群出没", "黑森林出现狼群！参与 `/探索` 有小概率获得稀有材料。", {"weather": "狼群"}),
-            ("🎁 神秘商队", "神秘商队来到群里！本小时所有商店商品 9 折。", {"weather": "商队"}),
+                {"key":"rain","title":"☔ 暴雨","description":"今日世界进入暴雨天气！探索金币 +20%，但探索额外消耗 2 体力。","weather":"暴雨","duration":60,"effects":{"explore_coin_multiplier":1.20,"explore_stamina_extra":2}},
+                {"key":"sunny","title":"☀️ 晴空","description":"阳光普照！本事件持续期间，每次签到额外获得 100 金币。","weather":"晴天","duration":120,"effects":{"checkin_bonus_coins":100}},
+                {"key":"meteor","title":"🌌 流星雨","description":"流星划过天空！本小时探索发现钻石的概率提高。","weather":"流星雨","duration":60,"effects":{"explore_gem_bonus_percent":10}},
+                {"key":"volcano","title":"🌋 火山异动","description":"火山开始震动！进入熔岩火山区域时，探索金币奖励提高 60%。","weather":"火山异动","duration":90,"effects":{"location_reward_location":"熔岩火山","location_reward_multiplier":1.60}},
+                {"key":"wolves","title":"🐺 狼群出没","description":"黑森林出现狼群！探索遇怪概率提高 12%。","weather":"狼群","duration":90,"effects":{"monster_chance_bonus_percent":12}},
+                {"key":"merchant","title":"🛒 神秘商队","description":"神秘商人来到了群里！本事件期间所有商店商品额外 10% off。","weather":"商队","duration":60,"effects":{"shop_discount_percent":10}},
             ]
-        title, desc, extra = random.choice(choices)
-        self.db.update_group(group_id, world_weather=extra["weather"], last_event_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-        return f"🌎【世界事件：{title}】\n{desc}\n\n输入 `/世界` 查看今天的世界状态。"
+        event=random.choice(choices)
+        now=int(datetime.now(timezone.utc).timestamp())
+        expires=now+max(1,int(event.get("duration",60))*60)
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        raw.set_world_event(group_id,event["key"],expires,event.get("effects",{}))
+        raw.update_group(group_id,world_weather=event.get("weather","特殊天气"),last_event_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        effect_lines=[]
+        effects=event.get("effects",{})
+        if effects.get("shop_discount_percent"): effect_lines.append(f"🏪 商店额外 -{effects['shop_discount_percent']}%")
+        if effects.get("explore_coin_multiplier"): effect_lines.append(f"🗺️ 探索金币 ×{effects['explore_coin_multiplier']}")
+        if effects.get("explore_gem_bonus_percent"): effect_lines.append(f"💎 探索发现钻石概率 +{effects['explore_gem_bonus_percent']}%")
+        if effects.get("checkin_bonus_coins"): effect_lines.append(f"📅 每次签到额外 +{effects['checkin_bonus_coins']}💰")
+        if effects.get("monster_chance_bonus_percent"): effect_lines.append(f"👹 遇怪概率 +{effects['monster_chance_bonus_percent']}%")
+        if effects.get("explore_stamina_extra"): effect_lines.append(f"❤️ 探索额外消耗 +{effects['explore_stamina_extra']} 体力")
+        if effects.get("location_reward_multiplier") and effects.get("location_reward_location"): effect_lines.append(f"📍 {effects['location_reward_location']} 收益 ×{effects['location_reward_multiplier']}")
+        if effect_lines:
+            event["description"] += "\n" + " ｜ ".join(effect_lines)
+        raw.log_world_event(group_id,"world_event",event["title"],event["description"],None,event.get("weather"),None)
+        return f"🌎【世界事件：{event['title']}】\n{event['description']}\n\n⏳ 持续约 {max(1,int(event.get('duration',60)))} 分钟。\n输入 `/世界` 查看当前世界状态。"
 
     def world_status(self, group_id: str) -> str:
         group = self.db.get_group(group_id)
@@ -1130,10 +1353,16 @@ class WorldEngine:
             self.db.upsert_group(group_id)
             group = self.db.get_group(group_id)
         boss_line = "无" if not group["boss_active"] else f"{group['boss_name']}（HP {fmt_num(group['boss_hp'])}/{fmt_num(group['boss_max_hp'])}）"
+        event=self._active_world_event(group_id)
+        event_line = "无" if not event else f"{event['key']}（剩余约 {max(1,(event['expires_at']-int(datetime.now(timezone.utc).timestamp()))//60)} 分钟）"
+        npc=self.db.raw.get_current_npc(group_id) if hasattr(self.db,"raw") else self.db.get_current_npc(group_id)
+        npc_line = "无" if not npc else f"{npc['name']} · {npc['role']}"
         return (
             "🌎 【群聊世界】\n"
             f"天气：{group['world_weather']}\n"
             f"地点：{group['world_location']}\n"
+            f"当前事件：{event_line}\n"
+            f"随机 NPC：{npc_line}\n"
             f"世界 Boss：{boss_line}\n"
             "\n"
             "🎮 推荐：/签到 /探索 /游戏 /宠物 /商店 /排行榜\n"
