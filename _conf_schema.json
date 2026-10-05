@@ -1,0 +1,868 @@
+{
+  "enabled": {
+    "description": "🌎 是否启用群聊世界",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后玩家指令和自动事件都不会运行，但数据库保留。"
+  },
+  "author_note": {
+    "description": "✍️ 作者标识（只读提示）",
+    "type": "string",
+    "default": "ysgl",
+    "invisible": true
+  },
+  "owner_user_ids": {
+    "description": "🔐 世界超级管理员 ID",
+    "type": "string",
+    "default": "",
+    "hint": "逗号分隔。该权限独立于会话管理员，拥有全部世界管理权限。",
+    "obvious_hint": true
+  },
+  "admin_user_ids": {
+    "description": "🔐 兼容旧版管理员 ID",
+    "type": "string",
+    "default": "",
+    "hint": "旧版配置兼容项，会与世界超级管理员 ID 合并。"
+  },
+  "session_admin_enabled": {
+    "description": "🛡️ 是否允许会话管理员使用世界管理",
+    "type": "bool",
+    "default": false,
+    "hint": "默认关闭。会话管理员的权限低于世界超级管理员。"
+  },
+  "session_admin_allowed_actions": {
+    "description": "🛡️ 会话管理员允许的管理动作",
+    "type": "string",
+    "default": "状态",
+    "hint": "逗号分隔，例如：状态,查看。世界超级管理员不受此限制。"
+  },
+  "web_admin_usernames": {
+    "description": "🖥️ Web 超级管理员账号",
+    "type": "string",
+    "default": "",
+    "hint": "填写 AstrBot Dashboard 用户名，多个用户名逗号分隔。命中后无需额外口令即可进入插件管理中心。"
+  },
+  "web_admin_password": {
+    "description": "🔑 Web 管理口令",
+    "type": "string",
+    "default": "",
+    "secret": true,
+    "hint": "独立于会话管理员。设置后可通过插件页面口令解锁完整管理权限。"
+  },
+  "disabled_group_ids": {
+    "description": "⛔ 禁用群 ID",
+    "type": "string",
+    "default": "",
+    "hint": "逗号分隔。优先级高于群内启用状态。"
+  },
+  "group_overrides_json": {
+    "description": "🎛️ 群级覆盖配置 JSON",
+    "type": "text",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "按群覆盖任意同名配置，例如 {\"123456\":{\"checkin_max_coins\":1000,\"game_enabled\":false}}。"
+  },
+  "default_new_player_coins": {
+    "description": "💰 新玩家初始金币",
+    "type": "int",
+    "default": 1000,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 100
+    }
+  },
+  "default_new_player_gems": {
+    "description": "💎 新玩家初始钻石",
+    "type": "int",
+    "default": 3,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "max_stamina": {
+    "description": "❤️ 最大体力",
+    "type": "int",
+    "default": 100,
+    "slider": {
+      "min": 20,
+      "max": 500,
+      "step": 5
+    }
+  },
+  "stamina_regen_minutes": {
+    "description": "⏱️ 体力恢复间隔（分钟）",
+    "type": "int",
+    "default": 10,
+    "slider": {
+      "min": 1,
+      "max": 120,
+      "step": 1
+    }
+  },
+  "stamina_regen_amount": {
+    "description": "💚 每次恢复体力",
+    "type": "int",
+    "default": 1,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "new_player_protection_hours": {
+    "description": "🛡️ 新人保护时间（小时）",
+    "type": "int",
+    "default": 24,
+    "slider": {
+      "min": 0,
+      "max": 720,
+      "step": 1
+    }
+  },
+  "transfer_max_coins": {
+    "description": "💸 单次最高转账金币",
+    "type": "int",
+    "default": 1000000,
+    "slider": {
+      "min": 1,
+      "max": 100000000,
+      "step": 1000
+    }
+  },
+  "profession_change_cost": {
+    "description": "🧭 转职费用",
+    "type": "int",
+    "default": 5000,
+    "slider": {
+      "min": 0,
+      "max": 1000000,
+      "step": 100
+    }
+  },
+  "profession_cooldown_days": {
+    "description": "🧭 转职冷却天数",
+    "type": "int",
+    "default": 7,
+    "slider": {
+      "min": 0,
+      "max": 90,
+      "step": 1
+    }
+  },
+  "checkin_min_coins": {
+    "description": "📅 签到最低金币",
+    "type": "int",
+    "default": 100,
+    "slider": {
+      "min": 0,
+      "max": 10000,
+      "step": 10
+    }
+  },
+  "checkin_max_coins": {
+    "description": "📅 签到最高金币",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 0,
+      "max": 50000,
+      "step": 10
+    }
+  },
+  "checkin_streak_bonus_per_day": {
+    "description": "🔥 连续签到每日额外金币",
+    "type": "int",
+    "default": 15,
+    "slider": {
+      "min": 0,
+      "max": 500,
+      "step": 5
+    }
+  },
+  "checkin_streak_bonus_cap": {
+    "description": "🔥 连续签到额外金币上限",
+    "type": "int",
+    "default": 1000,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "explore_enabled": {
+    "description": "🗺️ 启用探索",
+    "type": "bool",
+    "default": true
+  },
+  "explore_daily_limit": {
+    "description": "🗺️ 每日探索次数上限",
+    "type": "int",
+    "default": 20,
+    "slider": {
+      "min": 1,
+      "max": 200,
+      "step": 1
+    }
+  },
+  "explore_stamina_cost": {
+    "description": "🗺️ 普通探索体力消耗",
+    "type": "int",
+    "default": 10,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "explore_deep_extra_cost": {
+    "description": "🗺️ 深度探索额外消耗",
+    "type": "int",
+    "default": 10,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "explore_danger_extra_cost": {
+    "description": "🗺️ 危险探索额外消耗",
+    "type": "int",
+    "default": 25,
+    "slider": {
+      "min": 0,
+      "max": 150,
+      "step": 1
+    }
+  },
+  "explore_reward_multiplier": {
+    "description": "🗺️ 探索收益倍率",
+    "type": "float",
+    "default": 1.0,
+    "slider": {
+      "min": 0.1,
+      "max": 5.0,
+      "step": 0.1
+    }
+  },
+  "explore_rare_bonus_percent": {
+    "description": "✨ 探索稀有事件基础概率（百分比）",
+    "type": "int",
+    "default": 6,
+    "slider": {
+      "min": 0,
+      "max": 50,
+      "step": 1
+    }
+  },
+  "explore_danger_percent": {
+    "description": "⚠️ 探索危险事件概率（百分比）",
+    "type": "int",
+    "default": 10,
+    "slider": {
+      "min": 0,
+      "max": 50,
+      "step": 1
+    }
+  },
+  "pet_enabled": {
+    "description": "🐾 启用宠物系统",
+    "type": "bool",
+    "default": true
+  },
+  "pet_draw_cost": {
+    "description": "🐾 宠物抽取价格",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "pet_draw_cooldown_seconds": {
+    "description": "🐾 宠物抽取冷却（秒）",
+    "type": "int",
+    "default": 3,
+    "slider": {
+      "min": 0,
+      "max": 3600,
+      "step": 1
+    }
+  },
+  "pet_rarity_json": {
+    "description": "🐾 宠物稀有度概率 JSON",
+    "type": "text",
+    "default": "{\"普通\":52,\"优秀\":28,\"稀有\":13,\"史诗\":5,\"传说\":1.8,\"神话\":0.2}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
+  },
+  "equipment_enabled": {
+    "description": "⚔️ 启用装备系统",
+    "type": "bool",
+    "default": true
+  },
+  "equipment_max_level": {
+    "description": "⚔️ 装备强化最高等级",
+    "type": "int",
+    "default": 15,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "equipment_ore_cost": {
+    "description": "⛏️ 装备初始强化矿石消耗",
+    "type": "int",
+    "default": 2,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "equipment_upgrade_base_rate": {
+    "description": "⚔️ 装备基础强化成功率",
+    "type": "float",
+    "default": 0.78,
+    "slider": {
+      "min": 0.1,
+      "max": 0.99,
+      "step": 0.01
+    }
+  },
+  "shop_enabled": {
+    "description": "🏪 启用商店",
+    "type": "bool",
+    "default": true
+  },
+  "shop_discount_percent": {
+    "description": "🏪 全局商店折扣（百分比）",
+    "type": "int",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 90,
+      "step": 1
+    }
+  },
+  "shop_catalog_json": {
+    "description": "🏪 商店商品自定义 JSON",
+    "type": "text",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "可覆盖内置商品价格和描述。留空对象表示使用内置商品。"
+  },
+  "daily_tasks_enabled": {
+    "description": "📋 启用每日任务",
+    "type": "bool",
+    "default": true
+  },
+  "daily_task_reward_multiplier": {
+    "description": "📋 每日任务奖励倍率",
+    "type": "float",
+    "default": 1.0,
+    "slider": {
+      "min": 0,
+      "max": 5,
+      "step": 0.1
+    }
+  },
+  "achievements_enabled": {
+    "description": "🏆 启用成就系统",
+    "type": "bool",
+    "default": true
+  },
+  "game_enabled": {
+    "description": "🎮 启用小游戏",
+    "type": "bool",
+    "default": true
+  },
+  "game_guess_reward": {
+    "description": "🎯 猜数字基础奖励",
+    "type": "int",
+    "default": 900,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "game_rps_win_reward": {
+    "description": "✊ 猜拳胜利奖励",
+    "type": "int",
+    "default": 260,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 10
+    }
+  },
+  "game_rps_draw_reward": {
+    "description": "✊ 猜拳平局奖励",
+    "type": "int",
+    "default": 100,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 10
+    }
+  },
+  "game_bomb_safe_reward": {
+    "description": "💣 炸弹安全奖励",
+    "type": "int",
+    "default": 80,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 10
+    }
+  },
+  "fishing_enabled": {
+    "description": "🎣 启用钓鱼",
+    "type": "bool",
+    "default": true
+  },
+  "fishing_stamina_cost": {
+    "description": "🎣 钓鱼体力消耗",
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "mining_enabled": {
+    "description": "⛏️ 启用挖矿",
+    "type": "bool",
+    "default": true
+  },
+  "mining_stamina_cost": {
+    "description": "⛏️ 挖矿体力消耗",
+    "type": "int",
+    "default": 12,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "work_enabled": {
+    "description": "🧰 启用打工",
+    "type": "bool",
+    "default": true
+  },
+  "work_cooldown_minutes": {
+    "description": "🧰 打工冷却（分钟）",
+    "type": "int",
+    "default": 30,
+    "slider": {
+      "min": 1,
+      "max": 1440,
+      "step": 1
+    }
+  },
+  "boss_enabled": {
+    "description": "🐉 启用世界 Boss",
+    "type": "bool",
+    "default": true
+  },
+  "enable_auto_boss": {
+    "description": "🐉 自动生成 Boss",
+    "type": "bool",
+    "default": true
+  },
+  "boss_interval_hours": {
+    "description": "🐉 Boss 自动间隔（小时）",
+    "type": "int",
+    "default": 12,
+    "slider": {
+      "min": 1,
+      "max": 720,
+      "step": 1
+    }
+  },
+  "boss_duration_hours": {
+    "description": "🐉 Boss 持续时间（小时）",
+    "type": "int",
+    "default": 4,
+    "slider": {
+      "min": 1,
+      "max": 168,
+      "step": 1
+    }
+  },
+  "boss_max_hp": {
+    "description": "🐉 Boss 初始生命值",
+    "type": "int",
+    "default": 100000,
+    "slider": {
+      "min": 1000,
+      "max": 100000000,
+      "step": 1000
+    }
+  },
+  "boss_damage_base": {
+    "description": "🐉 Boss 基础伤害",
+    "type": "int",
+    "default": 80,
+    "slider": {
+      "min": 10,
+      "max": 100000,
+      "step": 10
+    }
+  },
+  "boss_attack_cooldown_seconds": {
+    "description": "🐉 Boss 攻击冷却（秒）",
+    "type": "int",
+    "default": 10,
+    "slider": {
+      "min": 1,
+      "max": 3600,
+      "step": 1
+    }
+  },
+  "boss_top_reward": {
+    "description": "🐉 Boss 第一名奖励",
+    "type": "int",
+    "default": 8000,
+    "slider": {
+      "min": 0,
+      "max": 1000000,
+      "step": 100
+    }
+  },
+  "boss_reward_decay": {
+    "description": "🐉 Boss 每名排名递减奖励",
+    "type": "int",
+    "default": 600,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "boss_min_reward": {
+    "description": "🐉 Boss 最低排名奖励",
+    "type": "int",
+    "default": 1000,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 100
+    }
+  },
+  "enable_auto_world_events": {
+    "description": "🌦️ 自动世界事件",
+    "type": "bool",
+    "default": true
+  },
+  "world_event_interval_minutes": {
+    "description": "🌦️ 世界事件最短间隔（分钟）",
+    "type": "int",
+    "default": 90,
+    "slider": {
+      "min": 10,
+      "max": 10080,
+      "step": 10
+    }
+  },
+  "world_event_chance": {
+    "description": "🌦️ 到达间隔后的触发概率（百分比）",
+    "type": "int",
+    "default": 60,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "event_catalog_json": {
+    "description": "🌦️ 自定义世界事件 JSON",
+    "type": "text",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
+  },
+  "tutorial_enabled": {
+    "description": "📖 启用新手教程",
+    "type": "bool",
+    "default": true
+  },
+  "tutorial_auto_start": {
+    "description": "📖 注册后自动开始教程",
+    "type": "bool",
+    "default": true
+  },
+  "tutorial_allow_skip": {
+    "description": "📖 允许玩家跳过教程",
+    "type": "bool",
+    "default": true
+  },
+  "tutorial_pages_json": {
+    "description": "📖 自定义教程内容 JSON",
+    "type": "text",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "按 1~6 覆盖对应教程页，例如 {\"1\":\"自定义第一页内容\"}。"
+  },
+  "invite_enabled": {
+    "description": "🎁 启用邀请系统",
+    "type": "bool",
+    "default": true,
+    "hint": "新玩家可以使用邀请码，双方奖励由下列配置控制。"
+  },
+  "invite_code_length": {
+    "description": "🎁 邀请码长度",
+    "type": "int",
+    "default": 6,
+    "slider": {
+      "min": 4,
+      "max": 12,
+      "step": 1
+    }
+  },
+  "invite_max_uses_per_user": {
+    "description": "🎁 单个用户最多成功邀请人数",
+    "type": "int",
+    "default": 20,
+    "slider": {
+      "min": 0,
+      "max": 1000,
+      "step": 1
+    },
+    "hint": "0 表示不限次数。"
+  },
+  "invite_inviter_coins": {
+    "description": "🎁 邀请人金币奖励",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "invite_inviter_gems": {
+    "description": "🎁 邀请人钻石奖励",
+    "type": "int",
+    "default": 1,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "invite_inviter_exp": {
+    "description": "🎁 邀请人经验奖励",
+    "type": "int",
+    "default": 100,
+    "slider": {
+      "min": 0,
+      "max": 10000,
+      "step": 50
+    }
+  },
+  "invite_invitee_coins": {
+    "description": "🎁 被邀请人金币奖励",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 0,
+      "max": 100000,
+      "step": 50
+    }
+  },
+  "invite_invitee_gems": {
+    "description": "🎁 被邀请人钻石奖励",
+    "type": "int",
+    "default": 1,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "invite_invitee_exp": {
+    "description": "🎁 被邀请人经验奖励",
+    "type": "int",
+    "default": 200,
+    "slider": {
+      "min": 0,
+      "max": 10000,
+      "step": 50
+    }
+  },
+  "auto_battle_enabled": {
+    "description": "🤖 启用自动战斗",
+    "type": "bool",
+    "default": true,
+    "hint": "玩家可使用 /自动战斗 开启。"
+  },
+  "auto_battle_interval_seconds": {
+    "description": "🤖 自动战斗回合间隔（秒）",
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 3,
+      "max": 60,
+      "step": 1
+    }
+  },
+  "auto_battle_max_turns": {
+    "description": "🤖 单次自动战斗最大回合数",
+    "type": "int",
+    "default": 80,
+    "slider": {
+      "min": 5,
+      "max": 500,
+      "step": 5
+    }
+  },
+  "auto_battle_broadcast_every": {
+    "description": "🤖 自动战斗每多少回合主动播报一次",
+    "type": "int",
+    "default": 3,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "ai_story_enabled": {
+    "description": "🤖 AI 剧情预留开关",
+    "type": "bool",
+    "default": false,
+    "hint": "当前版本只保留配置位，不会自动调用模型，避免增加额外 token 消耗。"
+  },
+  "data_retention_days": {
+    "description": "🗄️ 日志保留天数",
+    "type": "int",
+    "default": 180,
+    "slider": {
+      "min": 7,
+      "max": 3650,
+      "step": 1
+    }
+  },
+  "max_dashboard_rows": {
+    "description": "📊 管理面板单表最大行数",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 50,
+      "max": 5000,
+      "step": 50
+    }
+  },
+  "monster_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "探索中启用普通怪物遭遇。"
+  },
+  "explore_monster_chance_percent": {
+    "type": "int",
+    "default": 16,
+    "description": "探索危险分支中遭遇怪物的基础概率。",
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "monster_encounter_minutes": {
+    "type": "int",
+    "default": 15,
+    "description": "怪物遭遇持续时间（分钟）。",
+    "slider": {
+      "min": 1,
+      "max": 120,
+      "step": 1
+    }
+  },
+  "monster_catalog_json": {
+    "type": "text",
+    "default": "{}",
+    "description": "自定义怪物模板 JSON。字段：name/hp/attack/defense/coins/exp/items。"
+  },
+  "skill_system_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "启用技能系统。"
+  },
+  "skill_slot_limit": {
+    "type": "int",
+    "default": 4,
+    "description": "技能栏最多装备数量。",
+    "slider": {
+      "min": 1,
+      "max": 8,
+      "step": 1
+    }
+  },
+  "skill_bond_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "启用技能羁绊。"
+  },
+  "monster_reward_multiplier": {
+    "type": "float",
+    "default": 1.0,
+    "description": "怪物奖励倍率。",
+    "slider": {
+      "min": 0.1,
+      "max": 5.0,
+      "step": 0.1
+    }
+  },
+  "proactive_tips_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "定期在对应群主动发送玩法提示。"
+  },
+  "proactive_tip_interval_minutes": {
+    "type": "int",
+    "default": 180,
+    "description": "主动提示最短间隔（分钟）。",
+    "slider": {
+      "min": 30,
+      "max": 1440,
+      "step": 30
+    }
+  },
+  "tip_catalog_json": {
+    "type": "text",
+    "default": "{\"1\": \"💡 小提示：第一次进入玩法，建议按 /签到 → /任务 → /探索 的顺序开始。\", \"2\": \"💡 小提示：探索遇到怪物后不要继续 /探索，先用 /怪物 查看，再战斗。\", \"3\": \"💡 小提示：输入 /技能 会列出全部技能、消耗、冷却和技能栏。\", \"4\": \"💡 小提示：技能组合可以触发羁绊，换技能时别忘了重新看看搭配。\", \"5\": \"💡 小提示：/背包 会显示物品作用，恢复品可以直接用 /使用 物品ID 数量。\", \"6\": \"💡 小提示：击败普通怪物可以获得金币、EXP 和材料。\", \"7\": \"💡 小提示：体力会恢复，危险探索适合留足药水再挑战。\", \"8\": \"💡 小提示：同一个角色可以跨群成长，换群不会丢等级和装备。\", \"9\": \"💡 小提示：世界Boss更适合多人合作，贡献越高，奖励通常越好。\", \"10\": \"💡 小提示：不知道下一步怎么玩？输入 /世界；忘记指令输入 /帮助。\", \"11\": \"💡 小提示：每天做完 /任务，再去探索和打Boss，是比较稳定的成长路线。\", \"12\": \"💡 小提示：高等级怪物更危险，但掉落也更好；先强化装备再挑战。\", \"13\": \"💡 小提示：技能有冷却，轮流使用不同技能可以更顺畅地连续战斗。\", \"14\": \"💡 小提示：不要把金币全部花光，探索、转职和强化都需要长期资源。\", \"15\": \"💡 小提示：/教程 可以重新查看新手教学，/继续教程 可以接着上次的进度。\"}",
+    "description": "自定义主动提示 JSON。",
+    "hint": "内置15条小提示，也可以按 JSON 对象自定义。系统每次只随机选一条。"
+  },
+  "proactive_broadcast_cooldown_minutes": {
+    "type": "int",
+    "default": 15,
+    "description": "主动消息全局冷却（分钟）",
+    "hint": "所有群共享一个主动消息冷却窗口；一个窗口内最多发送一条主动消息，避免不同群同时刷屏。",
+    "slider": {
+      "min": 1,
+      "max": 1440,
+      "step": 1
+    }
+  },
+  "proactive_message_footer": {
+    "type": "string",
+    "default": "🎮 想开始游玩吗？输入 /注册 开始游玩群聊世界。",
+    "description": "主动消息固定尾部提示",
+    "hint": "随机事件、玩法小提示、自动Boss等主动消息发送后都会追加这段文字。"
+  }
+}
