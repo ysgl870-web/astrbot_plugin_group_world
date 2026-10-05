@@ -24,7 +24,7 @@
       <nav id="nav" class="nav"></nav>
       <div class="sidebar-foot">
         <div>作者：<b>ysgl</b></div>
-        <div id="versionText">群聊世界 V1.5.0</div>
+        <div id="versionText">群聊世界 V1.6.2</div>
       </div>
     </aside>
 
@@ -38,7 +38,7 @@
         <div class="top-actions">
           <select id="groupSelect" title="群世界操作目标；玩家中心不按群拆分"></select>
           <button class="ghost" id="refreshBtn">刷新数据</button>
-          <button class="primary" id="exportBtn">导出数据</button>
+          <button class="ghost" id="importBtn">导入数据</button><button class="primary" id="exportBtn">导出数据</button>
         </div>
       </header>
 
@@ -59,6 +59,18 @@
   </div>
 
 
+  <div id="importModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><div><div class="eyebrow">DATA IMPORT</div><h2>导入数据</h2><p class="muted">支持本插件导出的 JSON 快照，也兼容 V1.5 旧版导出文件。导入前会自动生成安全备份。</p></div><button id="importModalClose" class="ghost">关闭</button></div>
+      <div class="form-grid">
+        <label>选择 JSON 文件<input id="importFile" type="file" accept="application/json,.json"></label>
+        <label style="grid-column:1/-1">或直接粘贴 JSON<textarea id="importText" rows="12" placeholder="把 world-export-*.json 内容粘贴到这里"></textarea></label>
+      </div>
+      <div class="modal-actions"><button id="importRun" class="primary">开始导入</button><button id="importCancel" class="ghost">取消</button></div>
+      <div id="importHint" class="hint"></div>
+    </div>
+  </div>
+
   <div id="playerModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head"><div><div class="eyebrow">PLAYER EDITOR</div><h2>编辑玩家数据</h2><p id="playerModalUser" class="muted"></p></div><button id="playerModalClose" class="ghost">关闭</button></div>
@@ -70,6 +82,21 @@
         <label>钻石<input id="pf_gems" type="number" min="0"></label>
         <label>当前体力<input id="pf_stamina" type="number" min="0"></label>
         <label>战斗生命<input id="pf_hp" type="number" min="0"></label>
+        <label>战斗攻击<input id="pf_battle_attack" type="number" min="1"></label>
+        <label>战斗防御<input id="pf_battle_defense" type="number" min="0"></label>
+        <label>暴击率 %<input id="pf_battle_crit_rate" type="number" min="0" max="95" step="0.1"></label>
+        <label>闪避率 %<input id="pf_battle_dodge_rate" type="number" min="0" max="80" step="0.1"></label>
+        <label>战斗速度<input id="pf_battle_speed" type="number" min="1"></label>
+        <label>PVP 积分<input id="pf_pvp_rating" type="number" min="0"></label>
+        <label>PVP 连胜<input id="pf_pvp_streak" type="number" min="0"></label>
+        <label>胜场<input id="pf_battle_wins" type="number" min="0"></label>
+        <label>负场<input id="pf_battle_losses" type="number" min="0"></label>
+        <label>平局<input id="pf_battle_draws" type="number" min="0"></label>
+        <label>击杀<input id="pf_battle_kills" type="number" min="0"></label>
+        <label>死亡<input id="pf_battle_deaths" type="number" min="0"></label>
+        <label>死亡状态<input id="pf_death_state" type="number" min="0" max="1"></label>
+        <label>复活时间戳<input id="pf_respawn_at" type="number" min="0"></label>
+        <label>复活次数<input id="pf_revive_count" type="number" min="0"></label>
         <label>最大生命<input id="pf_max_hp" type="number" min="1"></label>
         <label>最大体力<input id="pf_max_stamina" type="number" min="1"></label>
         <label>幸运<input id="pf_luck" type="number" min="0"></label>
