@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -116,6 +118,24 @@ class Database:
             total_earned_coins INTEGER NOT NULL DEFAULT 0,
             total_spent_coins INTEGER NOT NULL DEFAULT 0,
             last_action_at TEXT,
+            player_uid TEXT NOT NULL DEFAULT '',
+            battle_attack INTEGER NOT NULL DEFAULT 50,
+            battle_defense INTEGER NOT NULL DEFAULT 5,
+            battle_crit_rate REAL NOT NULL DEFAULT 8.0,
+            battle_dodge_rate REAL NOT NULL DEFAULT 3.0,
+            battle_speed INTEGER NOT NULL DEFAULT 100,
+            battle_wins INTEGER NOT NULL DEFAULT 0,
+            battle_losses INTEGER NOT NULL DEFAULT 0,
+            battle_draws INTEGER NOT NULL DEFAULT 0,
+            battle_kills INTEGER NOT NULL DEFAULT 0,
+            battle_deaths INTEGER NOT NULL DEFAULT 0,
+            pvp_rating INTEGER NOT NULL DEFAULT 1000,
+            pvp_streak INTEGER NOT NULL DEFAULT 0,
+            death_state INTEGER NOT NULL DEFAULT 0,
+            respawn_at INTEGER NOT NULL DEFAULT 0,
+            revive_count INTEGER NOT NULL DEFAULT 0,
+            last_combat_group_id TEXT,
+            last_combat_at TEXT,
             PRIMARY KEY (group_id, user_id)
         );
 
@@ -275,6 +295,41 @@ class Database:
             PRIMARY KEY (group_id,user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS duel_queue (
+            user_id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            session_origin TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '冒险者',
+            rating INTEGER NOT NULL DEFAULT 1000,
+            joined_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued'
+        );
+
+        CREATE TABLE IF NOT EXISTS duel_battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            p1_user_id TEXT NOT NULL, p1_group_id TEXT NOT NULL, p1_origin TEXT NOT NULL, p1_name TEXT NOT NULL,
+            p2_user_id TEXT NOT NULL, p2_group_id TEXT NOT NULL, p2_origin TEXT NOT NULL, p2_name TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'active',
+            turn_user_id TEXT, round_no INTEGER NOT NULL DEFAULT 1,
+            p1_hp INTEGER NOT NULL, p1_max_hp INTEGER NOT NULL, p2_hp INTEGER NOT NULL, p2_max_hp INTEGER NOT NULL,
+            p1_guard INTEGER NOT NULL DEFAULT 0, p2_guard INTEGER NOT NULL DEFAULT 0,
+            p1_stamina INTEGER NOT NULL DEFAULT 100, p2_stamina INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at INTEGER NOT NULL,
+            winner_user_id TEXT, loser_user_id TEXT, result_json TEXT NOT NULL DEFAULT '{}',
+            last_action_text TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_duel_active_p1 ON duel_battles(p1_user_id,state);
+        CREATE INDEX IF NOT EXISTS idx_duel_active_p2 ON duel_battles(p2_user_id,state);
+        CREATE INDEX IF NOT EXISTS idx_duel_queue_rating ON duel_queue(status,rating,joined_at);
+
+        CREATE TABLE IF NOT EXISTS duel_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            battle_id INTEGER NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
+            message TEXT NOT NULL, created_at TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_duel_messages_recipient ON duel_messages(recipient_user_id,created_at DESC);
+
         CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
         CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
 
@@ -350,6 +405,24 @@ class Database:
                 "last_action_at": "ALTER TABLE players ADD COLUMN last_action_at TEXT",
                 "hp": "ALTER TABLE players ADD COLUMN hp INTEGER NOT NULL DEFAULT 100",
                 "max_hp": "ALTER TABLE players ADD COLUMN max_hp INTEGER NOT NULL DEFAULT 100",
+                "player_uid": "ALTER TABLE players ADD COLUMN player_uid TEXT NOT NULL DEFAULT ''",
+                "battle_attack": "ALTER TABLE players ADD COLUMN battle_attack INTEGER NOT NULL DEFAULT 50",
+                "battle_defense": "ALTER TABLE players ADD COLUMN battle_defense INTEGER NOT NULL DEFAULT 5",
+                "battle_crit_rate": "ALTER TABLE players ADD COLUMN battle_crit_rate REAL NOT NULL DEFAULT 8.0",
+                "battle_dodge_rate": "ALTER TABLE players ADD COLUMN battle_dodge_rate REAL NOT NULL DEFAULT 3.0",
+                "battle_speed": "ALTER TABLE players ADD COLUMN battle_speed INTEGER NOT NULL DEFAULT 100",
+                "battle_wins": "ALTER TABLE players ADD COLUMN battle_wins INTEGER NOT NULL DEFAULT 0",
+                "battle_losses": "ALTER TABLE players ADD COLUMN battle_losses INTEGER NOT NULL DEFAULT 0",
+                "battle_draws": "ALTER TABLE players ADD COLUMN battle_draws INTEGER NOT NULL DEFAULT 0",
+                "battle_kills": "ALTER TABLE players ADD COLUMN battle_kills INTEGER NOT NULL DEFAULT 0",
+                "battle_deaths": "ALTER TABLE players ADD COLUMN battle_deaths INTEGER NOT NULL DEFAULT 0",
+                "pvp_rating": "ALTER TABLE players ADD COLUMN pvp_rating INTEGER NOT NULL DEFAULT 1000",
+                "pvp_streak": "ALTER TABLE players ADD COLUMN pvp_streak INTEGER NOT NULL DEFAULT 0",
+                "death_state": "ALTER TABLE players ADD COLUMN death_state INTEGER NOT NULL DEFAULT 0",
+                "respawn_at": "ALTER TABLE players ADD COLUMN respawn_at INTEGER NOT NULL DEFAULT 0",
+                "revive_count": "ALTER TABLE players ADD COLUMN revive_count INTEGER NOT NULL DEFAULT 0",
+                "last_combat_group_id": "ALTER TABLE players ADD COLUMN last_combat_group_id TEXT",
+                "last_combat_at": "ALTER TABLE players ADD COLUMN last_combat_at TEXT",
             }
             for field, sql in migrations.items():
                 if field not in existing:
@@ -396,6 +469,18 @@ class Database:
             self.conn.execute("INSERT OR IGNORE INTO group_members(group_id,user_id,name,joined_at,last_seen_at) "
                               "SELECT p.group_id,p.user_id,p.name,COALESCE(p.created_at,?),p.last_seen_at "
                               "FROM players p WHERE p.group_id!='__GLOBAL_USER__'", (utc_now(),))
+            import secrets as _secrets
+            blanks=self.conn.execute("SELECT rowid FROM players WHERE group_id='__GLOBAL_USER__' AND (player_uid='' OR player_uid IS NULL)").fetchall()
+            used={str(r[0]) for r in self.conn.execute("SELECT player_uid FROM players WHERE player_uid!='' AND player_uid IS NOT NULL").fetchall()}
+            for row in blanks:
+                candidate=''
+                while not candidate or candidate in used:
+                    candidate='GW-'+_secrets.token_hex(5).upper()
+                used.add(candidate)
+                self.conn.execute("UPDATE players SET player_uid=? WHERE rowid=?", (candidate,row[0]))
+            self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_players_player_uid ON players(player_uid) WHERE player_uid!=''")
+            self.conn.execute("UPDATE players SET battle_attack=50 WHERE battle_attack IS NULL OR battle_attack<1")
+            self.conn.execute("UPDATE players SET battle_defense=5 WHERE battle_defense IS NULL OR battle_defense<0")
             self.conn.commit()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
@@ -474,8 +559,8 @@ class Database:
                 INSERT INTO players(
                     group_id,user_id,name,coins,gems,stamina,max_stamina,
                     last_stamina_at,protected_until,created_at,updated_at,last_seen_at,
-                    tutorial_status,tutorial_step,last_action_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    tutorial_status,tutorial_step,last_action_at,player_uid
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     group_id,
@@ -493,6 +578,7 @@ class Database:
                     "pending",
                     0,
                     now,
+                    "",
                 ),
             )
             conn.execute(
@@ -509,6 +595,13 @@ class Database:
                     now,
                 ),
             )
+        if group_id == "__GLOBAL_USER__":
+            import secrets as _secrets
+            candidate=''
+            used={str(r[0]) for r in self.fetchall("SELECT player_uid FROM players WHERE player_uid!='' AND player_uid IS NOT NULL") }
+            while not candidate or candidate in used:
+                candidate='GW-'+_secrets.token_hex(5).upper()
+            self.execute("UPDATE players SET player_uid=? WHERE group_id=? AND user_id=?", (candidate,group_id,user_id))
         return self.get_player(group_id, user_id), True
 
     def refresh_stamina(self, player: sqlite3.Row, regen_minutes: int, regen_amount: int) -> sqlite3.Row:
@@ -524,7 +617,8 @@ class Database:
         hp_gain = periods * max(1, regen_amount * 2)
         current_hp = int(player["hp"]) if "hp" in player.keys() else int(player["max_stamina"])
         max_hp = int(player["max_hp"]) if "max_hp" in player.keys() else int(player["max_stamina"])
-        new_hp = min(max_hp, current_hp + hp_gain)
+        # 死亡玩家的生命只允许通过复活流程恢复，避免自然体力恢复造成“死亡但满血”的状态。
+        new_hp = current_hp if int(player["death_state"] or 0) else min(max_hp, current_hp + hp_gain)
         new_last = datetime.fromtimestamp(
             last_ts + periods * regen_minutes * 60, tz=timezone.utc
         ).isoformat(timespec="seconds")
@@ -1137,13 +1231,20 @@ class Database:
         if int(row["current_npc_expires_at"] or 0) <= now:
             self.clear_current_npc(group_id)
             return None
+        # V1.6.1 used the static NPC template id (e.g. `fortune`) as the
+        # interaction identity. That made a later spawn inherit old claims.
+        # Migrate any still-active legacy NPC to a unique per-spawn identity.
+        npc_id = str(row["current_npc_id"] or "")
+        if ":" not in npc_id:
+            npc_id = f"{npc_id}:{uuid.uuid4().hex[:12]}"
+            self.update_group(group_id, current_npc_id=npc_id)
         try:
             actions = json.loads(row["current_npc_actions_json"] or "[]")
             if not isinstance(actions, list): actions = []
         except Exception:
             actions = []
         return {
-            "id": row["current_npc_id"], "name": row["current_npc_name"], "role": row["current_npc_role"],
+            "id": npc_id, "name": row["current_npc_name"], "role": row["current_npc_role"],
             "description": row["current_npc_description"], "actions": actions, "expires_at": int(row["current_npc_expires_at"] or 0),
         }
 
@@ -1246,6 +1347,9 @@ class Database:
             "last_checkin", "protected_until", "explore_count", "explore_day", "active_pet_id",
             "total_explores", "total_games", "total_work", "total_boss_damage", "total_earned_coins",
             "total_spent_coins", "last_action_at",
+            "battle_attack", "battle_defense", "battle_crit_rate", "battle_dodge_rate", "battle_speed",
+            "battle_wins", "battle_losses", "battle_draws", "battle_kills", "battle_deaths", "pvp_rating", "pvp_streak",
+            "death_state", "respawn_at", "revive_count", "last_combat_group_id", "last_combat_at",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
         if not clean:
@@ -1281,6 +1385,11 @@ class Database:
             clean["luck"] = max(0, min(9999, int(clean["luck"])))
         if "renown" in clean:
             clean["renown"] = max(0, min(999999, int(clean["renown"])))
+        if "battle_attack" in clean: clean["battle_attack"] = max(1, min(999999, int(clean["battle_attack"])))
+        if "battle_defense" in clean: clean["battle_defense"] = max(0, min(999999, int(clean["battle_defense"])))
+        if "battle_crit_rate" in clean: clean["battle_crit_rate"] = max(0.0, min(95.0, float(clean["battle_crit_rate"])))
+        if "battle_dodge_rate" in clean: clean["battle_dodge_rate"] = max(0.0, min(80.0, float(clean["battle_dodge_rate"])))
+        if "battle_speed" in clean: clean["battle_speed"] = max(1, min(9999, int(clean["battle_speed"])))
         for counter in ("streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins"):
             if counter in clean:
                 clean[counter] = max(0, int(clean[counter]))
@@ -1306,7 +1415,7 @@ class Database:
             FROM players p WHERE p.group_id='__GLOBAL_USER__'"""
         params=[]
         if search:
-            sql += " AND (p.user_id LIKE ? OR p.name LIKE ?)"; params += [f"%{search}%",f"%{search}%"]
+            sql += " AND (p.user_id LIKE ? OR p.player_uid LIKE ? OR p.name LIKE ?)"; params += [f"%{search}%",f"%{search}%",f"%{search}%"]
         sql += " ORDER BY p.level DESC,p.exp DESC LIMIT ?"; params.append(max(1,min(5000,limit)))
         return self.fetchall(sql,params)
 
@@ -1393,11 +1502,118 @@ class Database:
             (group_id, like, like, max(1, min(limit, 1000))),
         )
 
+    def get_dashboard_tasks(self, date_key: str, group_id: str | None = None, limit: int = 1000) -> list[sqlite3.Row]:
+        """Return actual daily-task rows used by the game, including their global player names."""
+        where = ["t.date_key=?"]
+        params: list[Any] = [date_key]
+        if group_id:
+            # Current task data is player-global. When a group is selected, keep only
+            # players who have actually entered that group. Legacy group-scoped rows
+            # are accepted as well for backwards compatibility.
+            where.append("(t.group_id='__GLOBAL_USER__' OR t.group_id=?)")
+            params.append(group_id)
+        sql = f"""
+            SELECT t.*, COALESCE(p.name, t.user_id) AS player_name,
+                   COALESCE(p.level, 1) AS player_level,
+                   COALESCE((SELECT GROUP_CONCAT(gm2.group_id, ', ') FROM group_members gm2 WHERE gm2.user_id=t.user_id), '') AS member_groups
+            FROM daily_tasks t
+            LEFT JOIN players p ON p.user_id=t.user_id AND p.group_id='__GLOBAL_USER__'
+            WHERE {' AND '.join(where)}
+            ORDER BY t.completed DESC, t.user_id, t.task_id
+            LIMIT ?
+        """
+        params.append(max(1, min(int(limit), 5000)))
+        rows = self.fetchall(sql, params)
+        if group_id:
+            # For global tasks, filter membership in Python because GROUP_CONCAT is
+            # easier to keep compatible across older SQLite versions.
+            rows = [r for r in rows if (r['group_id'] == group_id or group_id in str(r['member_groups'] or '').split(', '))]
+        return rows[:max(1, min(int(limit), 5000))]
+
+    def get_dashboard_tutorials(self, limit: int = 1000) -> list[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT user_id,name,level,tutorial_status,tutorial_step,last_seen_at,updated_at FROM players WHERE group_id='__GLOBAL_USER__' ORDER BY updated_at DESC LIMIT ?",
+            (max(1, min(int(limit), 5000)),),
+        )
+
     def get_group_action_logs(self, group_id: str, limit: int = 100) -> list[sqlite3.Row]:
         return self.fetchall(
             "SELECT * FROM action_logs WHERE group_id=? ORDER BY created_at DESC LIMIT ?",
             (group_id, max(1, min(limit, 500))),
         )
+
+
+    # ------------------------- player UID / PvP -------------------------
+    def find_player_by_uid(self, player_uid: str) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM players WHERE group_id='__GLOBAL_USER__' AND player_uid=? LIMIT 1", (str(player_uid).strip(),))
+
+    def get_active_duel_for_user(self, user_id: str) -> Optional[sqlite3.Row]:
+        return self.fetchone("""
+            SELECT * FROM duel_battles WHERE state='active' AND (p1_user_id=? OR p2_user_id=?)
+            ORDER BY id DESC LIMIT 1
+        """, (str(user_id),str(user_id)))
+
+    def clear_duel_queue_user(self, user_id: str) -> None:
+        self.execute("UPDATE duel_queue SET status='cancelled' WHERE user_id=? AND status='queued'", (str(user_id),))
+
+    def get_duel_queue_user(self, user_id: str) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM duel_queue WHERE user_id=? AND status='queued' LIMIT 1", (str(user_id),))
+
+    def enqueue_duel(self, user_id: str, group_id: str, session_origin: str, name: str, rating: int, expires_at: int) -> None:
+        now=int(time.time())
+        self.execute("""INSERT INTO duel_queue(user_id,group_id,session_origin,name,rating,joined_at,expires_at,status)
+            VALUES(?,?,?,?,?,?,?,'queued') ON CONFLICT(user_id) DO UPDATE SET group_id=excluded.group_id,session_origin=excluded.session_origin,name=excluded.name,rating=excluded.rating,joined_at=excluded.joined_at,expires_at=excluded.expires_at,status='queued'""",
+                     (str(user_id),str(group_id),str(session_origin),name or '冒险者',int(rating),now,int(expires_at)))
+
+    def get_duel_candidates(self, now_ts: int, rating: int, rating_range: int, exclude_user: str, limit: int = 20) -> list[sqlite3.Row]:
+        self.execute("UPDATE duel_queue SET status='expired' WHERE status='queued' AND expires_at<=?", (int(now_ts),))
+        low=max(0,int(rating)-max(0,int(rating_range)))
+        high=int(rating)+max(0,int(rating_range))
+        return self.fetchall("""SELECT * FROM duel_queue WHERE status='queued' AND user_id!=? AND rating BETWEEN ? AND ?
+            ORDER BY ABS(rating-?) ASC, joined_at ASC LIMIT ?""", (str(exclude_user),low,high,int(rating),max(1,min(int(limit),100))))
+
+    def create_duel_battle(self, p1: dict[str,Any], p2: dict[str,Any], starter: str, expires_at: int) -> int:
+        now=utc_now()
+        with self.transaction() as conn:
+            cur=conn.execute("""INSERT INTO duel_battles(
+                p1_user_id,p1_group_id,p1_origin,p1_name,p2_user_id,p2_group_id,p2_origin,p2_name,state,turn_user_id,round_no,
+                p1_hp,p1_max_hp,p2_hp,p2_max_hp,p1_guard,p2_guard,p1_stamina,p2_stamina,created_at,updated_at,expires_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                p1['user_id'],p1['group_id'],p1['origin'],p1.get('name','冒险者'),p2['user_id'],p2['group_id'],p2['origin'],p2.get('name','冒险者'),
+                'active',starter,1,int(p1['max_hp']),int(p1['max_hp']),int(p2['max_hp']),int(p2['max_hp']),0,0,100,100,now,now,int(expires_at)
+            ))
+            conn.execute("UPDATE duel_queue SET status='matched' WHERE user_id IN (?,?)", (p1['user_id'],p2['user_id']))
+            return int(cur.lastrowid)
+
+    def get_duel(self, battle_id: int) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM duel_battles WHERE id=?", (int(battle_id),))
+
+    def update_duel(self, battle_id: int, **fields: Any) -> None:
+        allowed={'state','turn_user_id','round_no','p1_hp','p2_hp','p1_guard','p2_guard','p1_stamina','p2_stamina','updated_at','expires_at','winner_user_id','loser_user_id','result_json','last_action_text'}
+        clean={k:v for k,v in fields.items() if k in allowed}
+        if clean:
+            clean.setdefault('updated_at',utc_now())
+            self.execute("UPDATE duel_battles SET "+','.join(f'{k}=?' for k in clean)+" WHERE id=?", (*clean.values(),int(battle_id)))
+
+    def latest_finished_duel(self, user_id: str, window_seconds: int) -> Optional[sqlite3.Row]:
+        cutoff=int(time.time())-max(1,int(window_seconds))
+        return self.fetchone("""SELECT * FROM duel_battles WHERE state IN ('finished','expired') AND (p1_user_id=? OR p2_user_id=?)
+            AND CAST(strftime('%s',updated_at) AS INTEGER)>=? ORDER BY id DESC LIMIT 1""", (str(user_id),str(user_id),cutoff))
+
+    def insert_duel_message(self, battle_id: int, sender_user_id: str, recipient_user_id: str, message: str) -> int:
+        cur=self.execute("INSERT INTO duel_messages(battle_id,sender_user_id,recipient_user_id,message,created_at,delivered) VALUES(?,?,?,?,?,0)", (int(battle_id),str(sender_user_id),str(recipient_user_id),str(message)[:500],utc_now()))
+        return int(cur.lastrowid)
+
+    def get_due_respawns(self, now_ts: int, limit: int=100) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM players WHERE group_id='__GLOBAL_USER__' AND death_state=1 AND respawn_at>0 AND respawn_at<=? ORDER BY respawn_at ASC LIMIT ?", (int(now_ts),max(1,min(int(limit),500))))
+
+    def get_undelivered_duel_messages(self, recipient_user_id: str, limit: int=20) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM duel_messages WHERE recipient_user_id=? AND delivered=0 ORDER BY id ASC LIMIT ?", (str(recipient_user_id),max(1,min(int(limit),100))))
+
+    def mark_duel_messages_delivered(self, recipient_user_id: str, ids: list[int]) -> None:
+        if not ids:return
+        marks=','.join('?' for _ in ids)
+        self.execute(f"UPDATE duel_messages SET delivered=1 WHERE recipient_user_id=? AND id IN ({marks})", [str(recipient_user_id),*map(int,ids)])
 
 
 class _Tx:

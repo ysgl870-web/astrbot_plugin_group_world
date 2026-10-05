@@ -76,6 +76,7 @@ ITEM_INFO = {
     "super_potion": ("超级体力药水", "使用后恢复 100 点体力。"),
     "energy_drink": ("能量饮料", "恢复 50 体力，并获得 100 EXP。"),
     "food": ("冒险便当", "恢复 10 体力，并获得 40 EXP。"),
+    "revive_potion": ("复活药剂", "死亡时使用，恢复 50% 战斗生命。"),
     "ore": ("强化矿石", "装备强化材料，强化装备时消耗。"),
     "crystal": ("强化水晶", "稀有强化材料，可用于高品质装备。"),
     "key": ("神秘钥匙", "探索遗迹时有机会让宝箱奖励提升。"),
@@ -89,12 +90,29 @@ ITEM_INFO = {
     "void_fragment": ("虚空碎片", "终局区域的稀有材料。"),
 }
 
+ITEM_ALIASES = {
+    "体力药水": "potion", "药水": "potion", "小药": "potion",
+    "超级体力药水": "super_potion", "大药": "super_potion",
+    "能量饮料": "energy_drink", "能量": "energy_drink",
+    "冒险便当": "food", "便当": "food",
+    "复活药剂": "revive_potion", "复活药": "revive_potion",
+    "强化矿石": "ore", "矿石": "ore",
+    "强化水晶": "crystal", "水晶": "crystal",
+    "神秘钥匙": "key", "钥匙": "key",
+}
+
+def normalize_item_id(item_id: str) -> str:
+    value = str(item_id or "").strip()
+    return ITEM_ALIASES.get(value, value)
+
+
 SHOP = {
     "potion": ("体力药水", 300, "恢复 25 体力"),
     "super_potion": ("超级体力药水", 900, "恢复 100 体力"),
     "ore": ("强化矿石", 450, "装备强化材料"),
     "crystal": ("强化水晶", 1500, "稀有装备强化材料"),
     "food": ("冒险便当", 220, "恢复 10 体力并获得 40 经验"),
+    "revive_potion": ("复活药剂", 1800, "死亡时用于立即复活并恢复 50% 战斗生命"),
     "key": ("神秘钥匙", 1200, "探索遗迹时提高宝箱收益"),
     "energy_drink": ("能量饮料", 650, "恢复 50 体力并获得 100 经验"),
 }
@@ -193,7 +211,7 @@ class WorldEngine:
             if legacy:
                 player, created = self.db.ensure_player("__GLOBAL_USER__", user_id, name or legacy["name"], int(legacy["coins"]), int(legacy["gems"]), int(legacy["max_stamina"]), 0)
                 fields={k: legacy[k] for k in ("level","exp","stamina","max_stamina","hp","max_hp","luck","renown","profession","title","streak","total_checkin","last_checkin","explore_count","explore_day","active_pet_id","tutorial_status","tutorial_step","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins") if k in legacy.keys()}
-                self.db.set_global_player_fields(user_id, fields)
+                self.db.raw.set_global_player_fields(user_id, fields)
                 # One-time migration of owned collections.
                 raw=self.db.raw if hasattr(self.db,'raw') else self.db
                 for table in ('inventory','pets','equipment','achievements'):
@@ -319,6 +337,7 @@ class WorldEngine:
         text = (
             f"👤 【玩家档案】\n"
             f"名称：{player['name']}\n"
+            f"🆔 UID：{player['player_uid']}（QQ：{user_id}）\n"
             f"等级：Lv.{player['level']}（{player['exp']}/{next_req} EXP）\n"
             f"职业：{player['profession']}\n"
             f"称号：{player['title']}\n"
@@ -388,6 +407,8 @@ class WorldEngine:
         player, _ = self.ensure_player(group_id, user_id, name)
         if player["banned"]:
             return Result("🚫 你已被本群群聊世界封禁。")
+        if int(player["death_state"] or 0):
+            return Result(self.death_status(group_id, user_id))
         active_monster = self.db.raw.get_active_monster(group_id,user_id) if hasattr(self.db,"raw") else self.db.get_active_monster(group_id,user_id)
         if active_monster:
             return Result(f"👹 你正在与【{active_monster['monster_name']}】战斗。\n❤️ HP：{active_monster['hp']}/{active_monster['max_hp']}\n先输入 `/攻击怪物` 或 `/技能使用 技能名`，击败/逃脱后才能继续探索。")
@@ -591,8 +612,9 @@ class WorldEngine:
         row=self.db.raw.get_active_monster(group_id,user_id) if hasattr(self.db,"raw") else self.db.get_active_monster(group_id,user_id)
         if not row: return Result("👹 没有可攻击的怪物。先去 `/探索`。")
         p,_=self.ensure_player(group_id,user_id,name)
+        self.db.raw.set_global_player_fields(user_id,{"last_combat_group_id":group_id,"last_combat_at":utc_ts_iso()})
         if int(p["hp"])<=0:
-            return Result(f"💀 你的战斗生命已经耗尽（0/{p['max_hp']}）。\n请使用 `/使用 potion 1` 或等待生命恢复后再战斗。")
+            return Result(self.death_status(group_id,user_id))
         if skill_id not in SKILLS: return Result("❌ 技能不存在。输入 `/技能` 查看。")
         skill=SKILLS[skill_id]
         if not any(r["skill_id"]==skill_id and r["equipped"] for r in self.db.get_skills(user_id)) and skill_id!="普攻": return Result("❌ 这个技能不在你的技能栏。使用 `/技能装备 技能名`。")
@@ -606,9 +628,17 @@ class WorldEngine:
         multiplier=float(skill.get("power",1.0))
         if skill.get("type") == "aoe":
             multiplier *= float(skill.get("aoe_ratio",0.85) or 0.85) + 0.15
-        damage=max(1,int(base*multiplier)-int(row["defense"]))
-        if random.random()<0.08+p["luck"]/600: damage*=2; crit=True
-        else: crit=False
+        hits=max(1,int(skill.get("hits",1)))
+        damage=0; crit_count=0
+        for _ in range(hits):
+            hit=max(1,int(base*multiplier)-int(row["defense"]))
+            if random.random()<0.08+float(p["luck"])/600:
+                hit*=2; crit_count+=1
+            damage += hit
+        # 防御技能的核心价值是降低本回合即将到来的怪物反击，而不是造成伤害。
+        if skill.get("type") == "guard":
+            damage=0
+        crit=crit_count>0
         # tiny skill bonds: element pairs and profession synergy
         equipped={r["skill_id"] for r in self.db.get_skills(user_id) if r["equipped"]}
         bond=1.0; bond_text=''
@@ -621,6 +651,10 @@ class WorldEngine:
         hp=max(0,int(row["hp"])-damage)
         self.db.raw.update_monster(row["id"],hp=hp) if hasattr(self.db,"raw") else self.db.update_monster(row["id"],hp=hp)
         self.db.set_skill_cooldown(user_id,skill_id,int(skill.get("cooldown",0)))
+        heal=0
+        if skill.get("type") == "lifesteal" and damage>0:
+            heal=max(1,int(damage*float(skill.get("heal",0.28))))
+            self.db.change_hp(group_id,user_id,heal)
         if hp<=0:
             self.db.raw.update_monster(row["id"],status="defeated",hp=0) if hasattr(self.db,"raw") else self.db.update_monster(row["id"],status="defeated",hp=0)
             coins=int(row["reward_coins"]*float(self.cfg("monster_reward_multiplier",group_id,1.0))); exp=int(row["reward_exp"]*float(self.cfg("monster_reward_multiplier",group_id,1.0))); self.db.wallet_change(group_id,user_id,coins_delta=coins,kind="monster_reward",note=row["monster_name"]); player,ups=self.db.change_exp(group_id,user_id,exp)
@@ -642,6 +676,9 @@ class WorldEngine:
         base_taken=max(1,int(row["attack"]*random.uniform(.75,1.1))-defense//3)
         taken=max(1,int(base_taken*float(enemy_skill.get("multiplier",1.0))) if enemy_skill else base_taken)
         enemy_text=f"✨ 【{enemy_skill['name']}】！{enemy_skill.get('text','')}" if enemy_skill else ""
+        if skill.get("type") == "guard":
+            taken=max(1,int(taken*0.45))
+            enemy_text=(enemy_text+" ｜🛡️ 防御姿态生效，反击伤害降低 55%").strip(" ｜")
         group_extra=""
         raw=self.db.raw if hasattr(self.db,"raw") else self.db
         if enemy_skill and bool(enemy_skill.get("aoe",False)):
@@ -661,15 +698,23 @@ class WorldEngine:
                     other_eq=raw.get_equipped_stats(group_id,uid) if hasattr(raw,"get_equipped_stats") else {"defense":0}
                     hit=max(1,taken-int(other_eq.get("defense",0))//5)
                 self.db.change_hp(group_id,uid,-hit)
-                if uid!=user_id: extra.append(f"• 波及 {uid}：-{hit} HP")
+                affected=raw.get_player("__GLOBAL_USER__",uid) if hasattr(raw,"get_player") else None
+                if affected and int(affected["hp"])<=0 and uid!=user_id:
+                    self.db.stop_auto_battle(group_id,uid)
+                    self._handle_death(group_id,uid,f"{row['monster_name']}范围攻击")
+                    extra.append(f"• 波及 {uid}：已倒下并进入复活流程")
+                elif uid!=user_id:
+                    extra.append(f"• 波及 {uid}：-{hit} HP")
             if extra: group_extra="\n"+"\n".join(extra)
         else:
             self.db.change_hp(group_id,user_id,-taken)
         hp_now=self.db.get_player("__GLOBAL_USER__",user_id)["hp"]
         if hp_now<=0:
             self.db.stop_auto_battle(group_id,user_id)
-            return Result(f"💀 你被【{row['monster_name']}】击倒了！\n❤️ 战斗生命：0/{p['max_hp']}\n{enemy_text}\n建议使用 `/使用 potion 1` 恢复，恢复后再继续战斗。")
-        return Result(f"⚔️ 你用【{skill_id}】造成 {damage} 伤害{'｜暴击' if crit else ''}。\n👹 {row['monster_name']} 剩余 HP：{hp}\n💥 怪物反击，你损失 {taken} 战斗生命。{group_extra}\n{enemy_text}"+(f"\n✨ {bond_text}" if bond_text else '')+"\n\n下一步：继续 `/攻击怪物` 或 `/技能使用 技能名`；也可以 `/自动战斗 开启`。\n输入 `/怪物` 查看完整状态。")
+            return Result(self._handle_death(group_id,user_id,f"{row['monster_name']}战斗") + "\n" + enemy_text)
+        heal_text=f"\n🩸 吸血恢复 {heal} 战斗生命。" if heal else ""
+        crit_text=f"｜暴击 ×{crit_count}" if crit_count else ""
+        return Result(f"⚔️ 你用【{skill_id}】造成 {damage} 伤害{crit_text}。{heal_text}\n👹 {row['monster_name']} 剩余 HP：{hp}\n💥 怪物反击，你损失 {taken} 战斗生命。{group_extra}\n{enemy_text}"+(f"\n✨ {bond_text}" if bond_text else '')+"\n\n下一步：继续 `/攻击怪物` 或 `/技能使用 技能名`；也可以 `/自动战斗 开启`。\n输入 `/怪物` 查看完整状态。")
 
     def _skill_damage(self, player, eq, pet, skill_id, equipped, target_defense=0):
         skill=SKILLS[skill_id]
@@ -695,13 +740,19 @@ class WorldEngine:
         if cd: return Result(f"⏳【{skill_id}】还在冷却中：{cd} 秒。")
         p,_=self.ensure_player(group_id,user_id,name)
         if int(p["hp"])<=0:
-            return Result(f"💀 你的战斗生命已经耗尽（0/{p['max_hp']}）。\n请使用 `/使用 potion 1` 或等待生命恢复后再战斗。")
+            return Result(self.death_status(group_id,user_id))
         cost=int(SKILLS[skill_id].get("cost",0))
         if p["stamina"]<cost: return Result(f"❤️ 体力不足，需要 {cost}。可以输入 `/使用 potion 1` 回复体力。")
         if cost:self.db.change_stamina(group_id,user_id,-cost)
         eq=self.db.get_equipped_stats(group_id,user_id); pet=self.db.get_active_pet(group_id,user_id); equipped={r["skill_id"] for r in self.db.get_skills(user_id) if r["equipped"]}
         damage,crit,bond_text=self._skill_damage(p,eq,pet,skill_id,equipped,0)
+        if SKILLS[skill_id].get("type") == "guard":
+            damage=0
         hp=max(0,int(group["boss_hp"])-damage); self.db.update_group(group_id,boss_hp=hp); self.db.add_boss_damage(group_id,user_id,damage); self.db.update_player_metrics(group_id,user_id,total_boss_damage=damage); self.db.set_skill_cooldown(user_id,skill_id,int(SKILLS[skill_id].get("cooldown",0)))
+        lifesteal_heal=0
+        if SKILLS[skill_id].get("type") == "lifesteal" and damage>0:
+            lifesteal_heal=max(1,int(damage*float(SKILLS[skill_id].get("heal",0.28))))
+            self.db.change_hp(group_id,user_id,lifesteal_heal)
         xp=min(1200,120+damage//3); player,ups=self.db.change_exp(group_id,user_id,xp)
         if hp<=0:
             return Result(self.finish_boss(group_id,user_id),ups)
@@ -734,23 +785,68 @@ class WorldEngine:
                 else:
                     other_eq=raw.get_equipped_stats(group_id,uid) if hasattr(raw,"get_equipped_stats") else {"defense":0}
                     hit=max(1,taken-int(other_eq.get("defense",0))//5)
+                if uid==user_id and SKILLS[skill_id].get("type") == "guard":
+                    hit=max(1,int(hit*0.45))
                 self.db.change_hp(group_id,uid,-hit)
-                if uid != user_id: extra_lines.append(f"• 影响了 {uid}：-{hit} HP")
+                affected=raw.get_player("__GLOBAL_USER__",uid) if hasattr(raw,"get_player") else None
+                if affected and int(affected["hp"])<=0 and uid != user_id:
+                    self.db.stop_auto_battle(group_id,uid)
+                    self._handle_death(group_id,uid,"世界 Boss 范围攻击")
+                    extra_lines.append(f"• 影响了 {uid}：已倒下并进入复活流程")
+                elif uid != user_id:
+                    extra_lines.append(f"• 影响了 {uid}：-{hit} HP")
             group_extra = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
         else:
             taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
+            if SKILLS[skill_id].get("type") == "guard":
+                taken=max(1,int(taken*0.45))
             group_extra = ""
             self.db.change_hp(group_id,user_id,-taken)
         hp_now=self.db.get_player("__GLOBAL_USER__",user_id)["hp"]
         if hp_now<=0:
             self.db.stop_auto_battle(group_id,user_id)
-            return Result(f"💀 Boss 将你击倒了！\n❤️ 战斗生命：0/{p['max_hp']}\n建议使用 `/使用 potion 1` 恢复生命后再继续。")
+            return Result(self._handle_death(group_id,user_id,"世界 Boss 战斗") + (f"\n🐉 {boss_skill_text}" if boss_skill_text else ""))
         impact = f"\n🐉 {boss_skill_text}" if boss_skill_text else ""
-        return Result(f"⚔️ 你使用【{skill_id}】对 Boss 造成 {fmt_num(damage)} 点伤害{'｜暴击' if crit else ''}。\n🐉 Boss HP：{fmt_num(hp)}/{fmt_num(group['boss_max_hp'])}{impact}\n💥 Boss 反击，你损失 {taken} 战斗生命。{group_extra}\n⭐ +{xp} EXP" + (f"\n✨ {bond_text}" if bond_text else '') + "\n\n下一步：可继续 `/技能使用 技能名`、`/攻击`，或开启 `/自动战斗 Boss`。",ups)
+        heal_text=f"\n🩸 吸血恢复 {lifesteal_heal} 战斗生命。" if lifesteal_heal else ""
+        guard_text="\n🛡️ 防御姿态：本次 Boss 反击减伤 55%。" if SKILLS[skill_id].get("type") == "guard" else ""
+        return Result(f"⚔️ 你使用【{skill_id}】对 Boss 造成 {fmt_num(damage)} 点伤害{'｜暴击' if crit else ''}。{heal_text}\n🐉 Boss HP：{fmt_num(hp)}/{fmt_num(group['boss_max_hp'])}{impact}\n💥 Boss 反击，你损失 {taken} 战斗生命。{group_extra}{guard_text}\n⭐ +{xp} EXP" + (f"\n✨ {bond_text}" if bond_text else '') + "\n\n下一步：可继续 `/技能使用 技能名`、`/攻击`，或开启 `/自动战斗 Boss`。",ups)
+
+    def _choose_auto_skill(self, user_id: str, player, *, target_type: str = "monster") -> str:
+        rows = [r for r in self.db.get_skills(user_id) if r["equipped"] and self.db.skill_cooldown_remaining(user_id, r["skill_id"]) == 0]
+        choices = [str(r["skill_id"]) for r in rows if str(r["skill_id"]) in SKILLS]
+        if not choices:
+            return "普攻"
+        # Global AI master switch gates every AI enhancement. Basic auto battle
+        # remains available when AI is disabled.
+        if not bool(self.cfg("ai_enabled", None, False)) or not bool(self.cfg("auto_battle_ai_enabled", None, True)):
+            return choices[0]
+        aggression = max(0.0, min(1.0, float(self.cfg("auto_battle_ai_aggression", None, 0.65))))
+        hp_ratio = int(player["hp"]) / max(1, int(player["max_hp"]))
+        threshold = max(0.05, min(0.95, float(self.cfg("auto_battle_defense_threshold", None, 0.35))))
+        stamina=int(player["stamina"])
+        if hp_ratio <= threshold:
+            for preferred in ("吸血", "护盾"):
+                cost=int(SKILLS.get(preferred, {}).get("cost", 0))
+                if preferred in choices and cost<=stamina and (preferred != "护盾" or random.random() > aggression):
+                    return preferred
+        scored=[]
+        for sid in choices:
+            sk=SKILLS[sid]; cost=max(0,int(sk.get("cost",0)))
+            if sid!="普攻" and cost>stamina: continue
+            power=float(sk.get("power",1.0))
+            if sk.get("hits"): power*=float(sk["hits"])*0.92
+            if sk.get("type")=="aoe" and target_type=="monster": power*=1.08
+            score=(power/(1+cost*0.045))*(0.7+0.75*aggression)+random.random()*0.08
+            if sid=="普攻": score*=0.82
+            scored.append((score,sid))
+        return max(scored,default=(0,"普攻"))[1]
 
     def auto_battle_start(self, group_id:str,user_id:str,name:str,target:str="") -> str:
         if not bool(self.cfg("auto_battle_enabled",group_id,True)):
             return "🤖 管理员已关闭自动战斗系统。"
+        p,_=self.ensure_player(group_id,user_id,name)
+        if int(p["death_state"] or 0):
+            return self.death_status(group_id,user_id)
         target=(target or "").lower()
         if target in {"boss","世界boss","世界"}:
             g=self.db.get_group(group_id)
@@ -773,17 +869,18 @@ class WorldEngine:
         if not ab:return None
         p=self.db.get_player("__GLOBAL_USER__",user_id)
         if not p or p["banned"]: self.db.stop_auto_battle(group_id,user_id); return None
+        if int(p["death_state"] or 0) or int(p["hp"] or 0)<=0:
+            self.db.stop_auto_battle(group_id,user_id)
+            return "🤖 玩家当前处于死亡状态，自动战斗已停止。"
         if ab["target_type"]=="boss":
             g=self.db.get_group(group_id)
             if not g or not g["boss_active"]: self.db.stop_auto_battle(group_id,user_id); return "🤖 Boss 已结束，自动战斗已停止。"
-            skills=[r["skill_id"] for r in self.db.get_skills(user_id) if r["equipped"] and self.db.skill_cooldown_remaining(user_id,r["skill_id"])==0]
-            sid=next((x for x in reversed(skills) if x!="普攻"),"普攻")
+            sid=self._choose_auto_skill(user_id,p,target_type="boss")
             result=self.boss_use_skill(group_id,user_id,p["name"],sid)
         else:
             row=self.db.get_active_monster(group_id,user_id)
             if not row: self.db.stop_auto_battle(group_id,user_id); return "🤖 怪物已结束，自动战斗已停止。"
-            skills=[r["skill_id"] for r in self.db.get_skills(user_id) if r["equipped"] and self.db.skill_cooldown_remaining(user_id,r["skill_id"])==0]
-            sid=next((x for x in reversed(skills) if x!="普攻"),"普攻")
+            sid=self._choose_auto_skill(user_id,p,target_type="monster")
             result=self._monster_hit(group_id,user_id,p["name"],sid)
         self.db.touch_auto_battle(group_id,user_id,int(time.time()))
         text=result.text
@@ -996,17 +1093,8 @@ class WorldEngine:
         if player["coins"] < price:
             return f"💰 金币不足，需要 {fmt_num(price)}，当前 {fmt_num(player['coins'])}。"
         self.db.wallet_change(group_id, user_id, coins_delta=-price, kind="shop", note=f"购买{item_name}×{qty}" )
-        if item_id == "potion":
-            self.db.change_stamina(group_id, user_id, 25 * qty)
-        elif item_id == "super_potion":
-            self.db.change_stamina(group_id, user_id, 100 * qty)
-        elif item_id == "food":
-            self.db.change_stamina(group_id, user_id, 10 * qty); self.db.change_hp(group_id,user_id,10*qty)
-            self.db.change_exp(group_id, user_id, 40 * qty)
-        elif item_id == "energy_drink":
-            self.db.change_stamina(group_id, user_id, 50 * qty); self.db.change_exp(group_id, user_id, 100 * qty)
-        else:
-            self.db.add_item(group_id, user_id, item_id, item_name, qty)
+        # 购买只进入背包，不直接使用；这样 /购买 后才能稳定地通过 /使用 消耗物品。
+        self.db.add_item(group_id, user_id, item_id, item_name, qty)
         discount_note = []
         if discounts["profession"]: discount_note.append("商人 -10%")
         if discounts["global"]: discount_note.append(f"全局 -{discounts['global']}%")
@@ -1143,7 +1231,7 @@ class WorldEngine:
     def attack_boss(self, group_id: str, user_id: str, name: str) -> Result:
         player, _ = self.ensure_player(group_id, user_id, name)
         if int(player["hp"])<=0:
-            return Result(f"💀 你的战斗生命已经耗尽（0/{player['max_hp']}）。\n请使用 `/使用 potion 1` 恢复生命后再战斗。")
+            return Result(self.death_status(group_id,user_id))
         group = self.db.get_group(group_id)
         if not group or not group["boss_active"]:
             return Result("🐉 当前没有可攻击的世界 Boss。")
@@ -1228,7 +1316,11 @@ class WorldEngine:
         npc=random.choice(self.NPC_TEMPLATES)
         duration=max(5,int(self.cfg("npc_duration_minutes",group_id,30)))
         raw=self.db.raw if hasattr(self.db,"raw") else self.db
-        raw.set_current_npc(group_id,npc, int(time.time())+duration*60)
+        # Every spawn is a fresh interaction instance. The template id is only
+        # a type id; claims must be scoped to the current spawn.
+        instance=dict(npc)
+        instance["id"]=f"{npc['id']}:{int(time.time())}:{random.getrandbits(32):08x}"
+        raw.set_current_npc(group_id,instance, int(time.time())+duration*60)
         options=" ｜ ".join(f"{i+1}.{a['label']}" for i,a in enumerate(npc['actions']))
         raw.log_world_event(group_id,"npc",npc["name"],npc["description"],None,"NPC",group_id)
         return f"🧑‍🌾【神秘 NPC 出现】\n{npc['name']}（{npc['role']}）来到了群聊世界！\n{npc['description']}\n\n可互动：{options}\n发送 `/NPC` 查看详情。\n⏳ NPC 将停留约 {duration} 分钟。"
@@ -1259,22 +1351,32 @@ class WorldEngine:
             return "🧑‍🌾 这位 NPC 已经给过你这份奖励了。试试其他互动选项。"
         player,_=self.ensure_player(group_id,user_id,name)
         reward=act.get("reward")
-        raw.mark_npc_action(group_id,user_id,npc["id"],key)
+        result_text=""
         if reward=="coins":
-            gain=random.randint(600,1600); raw.wallet_change(group_id,user_id,coins_delta=gain,kind="npc",note=f"NPC {npc['name']} 交换")
-            return f"🧑‍🌾 {npc['name']}：不错的材料！我愿意支付 💰{gain}。\n你的互动已完成。"
-        if reward=="item":
+            gain=random.randint(600,1600)
+            self.db.wallet_change(group_id,user_id,coins_delta=gain,kind="npc",note=f"NPC {npc['name']} 交换")
+            result_text=f"🧑‍🌾 {npc['name']}：不错的材料！我愿意支付 💰{gain}。\n你的互动已完成。"
+        elif reward=="item":
             iid,iname,qty=random.choice([("potion","体力药水",1),("ore","强化矿石",2),("food","冒险便当",2),("crystal","强化水晶",1)])
-            raw.add_item(group_id,user_id,iid,iname,qty)
-            return f"🎁 {npc['name']} 送给你【{iname}】 ×{qty}。\n你的互动已完成。"
-        if reward=="luck":
-            raw.set_global_player_fields(user_id,{"luck":min(9999,int(player["luck"])+3)})
-            return f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{int(player['luck'])+3}"
-        if reward=="renown":
-            raw.set_global_player_fields(user_id,{"renown":min(999999,int(player["renown"])+20)})
-            return f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{int(player['renown'])+20}"
-        gain=random.randint(120,320); raw.change_exp(group_id,user_id,gain)
-        return f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
+            self.db.add_item(group_id,user_id,iid,iname,qty)
+            result_text=f"🎁 {npc['name']} 送给你【{iname}】 ×{qty}。\n你的互动已完成。"
+        elif reward=="luck":
+            new_luck=min(9999,int(player["luck"])+3)
+            self.db.raw.set_global_player_fields(user_id,{"luck":new_luck})
+            result_text=f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{new_luck}"
+        elif reward=="renown":
+            new_renown=min(999999,int(player["renown"])+20)
+            self.db.raw.set_global_player_fields(user_id,{"renown":new_renown})
+            result_text=f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{new_renown}"
+        else:
+            gain=random.randint(120,320)
+            self.db.change_exp(group_id,user_id,gain)
+            result_text=f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
+        # Do not persist a claim until the reward operation has succeeded. This
+        # prevents a failed first request from turning into a false “already
+        # rewarded” message on the next try.
+        raw.mark_npc_action(group_id,user_id,npc["id"],key)
+        return result_text
 
     def random_tip(self, group_id: str) -> str:
         tips=[
@@ -1387,31 +1489,244 @@ class WorldEngine:
     def use_item(self, group_id: str, user_id: str, name: str, item_id: str, qty: int = 1) -> Result:
         self.ensure_player(group_id, user_id, name)
         qty = max(1, min(int(qty), 20))
-        item = self.db.fetchone("SELECT * FROM inventory WHERE group_id=? AND user_id=? AND item_id=?", ("__GLOBAL_USER__", user_id, item_id))
+        item_id = normalize_item_id(item_id)
+        p = self.db.get_player("__GLOBAL_USER__", user_id)
+        item = self.db.fetchone(
+            "SELECT * FROM inventory WHERE group_id=? AND user_id=? AND item_id=? AND qty>0",
+            ("__GLOBAL_USER__", user_id, item_id),
+        )
         if not item or int(item["qty"]) < qty:
-            return Result("🎒 你没有足够的这个物品。")
+            owned = int(item["qty"]) if item else 0
+            return Result(f"🎒 物品不足：{item_id} ×{qty}，当前库存 ×{owned}。可输入 `/背包` 查看物品。")
+        if p and int(p["death_state"] or 0) and item_id != "revive_potion":
+            return Result("💀 你当前处于死亡状态，普通恢复品不能解除死亡。请使用 `/使用 revive_potion 1`，或等待自动复活。")
         if item_id == "potion":
             healed = 25 * qty
             self.db.add_item(group_id, user_id, "potion", "体力药水", -qty)
-            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id,user_id,healed)
-            return Result(f"🧪 使用体力药水 ×{qty}，恢复 {healed} 体力。")
+            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id, user_id, healed)
+            return Result(f"🧪 使用体力药水 ×{qty}，恢复 {healed} 生命/体力。")
         if item_id == "super_potion":
             healed = 100 * qty
             self.db.add_item(group_id, user_id, "super_potion", "超级体力药水", -qty)
-            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id,user_id,healed)
-            return Result(f"🧪 使用超级体力药水 ×{qty}，恢复 {healed} 体力。")
+            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id, user_id, healed)
+            return Result(f"🧪 使用超级体力药水 ×{qty}，恢复 {healed} 生命/体力。")
         if item_id == "energy_drink":
             healed = 50 * qty
             self.db.add_item(group_id, user_id, "energy_drink", "能量饮料", -qty)
-            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id,user_id,healed)
+            self.db.change_stamina(group_id, user_id, healed); self.db.change_hp(group_id, user_id, healed)
             self.db.change_exp(group_id, user_id, 100 * qty)
-            return Result(f"🥤 使用能量饮料 ×{qty}，恢复 {healed} 体力并获得 {100*qty} EXP。")
+            return Result(f"🥤 使用能量饮料 ×{qty}，恢复 {healed} 生命/体力并获得 {100*qty} EXP。")
         if item_id == "food":
             self.db.add_item(group_id, user_id, "food", "冒险便当", -qty)
-            self.db.change_stamina(group_id, user_id, 10 * qty); self.db.change_hp(group_id,user_id,10*qty)
+            self.db.change_stamina(group_id, user_id, 10 * qty); self.db.change_hp(group_id, user_id, 10 * qty)
             self.db.change_exp(group_id, user_id, 40 * qty)
-            return Result(f"🍱 吃下冒险便当 ×{qty}，恢复 {10*qty} 体力并获得 {40*qty} EXP。")
+            return Result(f"🍱 吃下冒险便当 ×{qty}，恢复 {10*qty} 生命/体力并获得 {40*qty} EXP。")
+        if item_id == "revive_potion":
+            if not p or int(p["death_state"] or 0) != 1:
+                return Result("🧪 你目前没有处于死亡状态，无需使用复活药剂。")
+            # 复活药剂是一次完整复活动作，不允许一次误用多枚，避免浪费库存。
+            if qty != 1:
+                return Result("🧪 复活药剂每次只消耗 1 枚。请使用 `/使用 revive_potion 1`。")
+            hp = max(1, int(int(p["max_hp"]) * float(self.cfg("revive_hp_percent", group_id, 0.5))))
+            self.db.add_item("__GLOBAL_USER__", user_id, "revive_potion", "复活药剂", -1)
+            self.db.raw.set_global_player_fields(user_id, {
+                "hp": hp, "death_state": 0, "respawn_at": 0,
+                "revive_count": int(p["revive_count"]) + 1,
+                "last_combat_group_id": group_id, "last_combat_at": utc_ts_iso(),
+            })
+            return Result(f"✨ 复活成功！消耗复活药剂 ×1。\n❤️ 战斗生命恢复至 {hp}/{p['max_hp']}。")
         return Result("❌ 这个物品目前不能直接使用。")
+
+    # ------------------------- cross-group PvP -------------------------
+    def _duel_stats(self, user_id: str) -> dict[str, Any]:
+        p=self.db.get_player("__GLOBAL_USER__",user_id)
+        if not p: return {}
+        eq=self.db.get_equipped_stats("__GLOBAL_USER__",user_id)
+        pet=self.db.get_active_pet("__GLOBAL_USER__",user_id)
+        return {"user_id":user_id,"name":p["name"],"max_hp":max(1,int(p["max_hp"])+int(p["level"])*4),
+                "attack":max(1,int(p["battle_attack"])+int(eq.get("attack",0))+(int(pet["attack"]) if pet else 0)*2),
+                "defense":max(0,int(p["battle_defense"])+int(eq.get("defense",0))+(int(pet["defense"]) if pet else 0)),
+                "crit":float(p["battle_crit_rate"]),"dodge":float(p["battle_dodge_rate"]),"speed":int(p["battle_speed"]),"rating":int(p["pvp_rating"])}
+
+    def duel_join(self, group_id: str, user_id: str, name: str, origin: str) -> str:
+        if not bool(self.cfg("duel_enabled",group_id,True)): return "⚔️ 管理员已关闭跨群决斗。"
+        p,_=self.ensure_player(group_id,user_id,name)
+        if int(p["death_state"]): return self.death_status(group_id,user_id)
+        if self.db.get_active_duel_for_user(user_id): return "⚔️ 你已经在决斗中。输入 `/决斗状态` 查看。"
+        q=self.db.get_duel_queue_user(user_id)
+        if q: return f"⏳ 你已经在匹配队列中。预计等待最多 {int(self.cfg('duel_queue_timeout_seconds',group_id,180))} 秒。"
+        rating=int(p["pvp_rating"]); now=utc_ts()
+        candidates=self.db.get_duel_candidates(now,rating,int(self.cfg("duel_match_rating_range",group_id,200)),user_id)
+        if candidates:
+            c=candidates[0]
+            p1=self._duel_stats(c["user_id"]); p2=self._duel_stats(user_id)
+            starter=p1["user_id"] if p1["speed"]>p2["speed"] else (p2["user_id"] if p2["speed"]>p1["speed"] else random.choice([p1["user_id"],p2["user_id"]]))
+            battle_id=self.db.create_duel_battle({**p1,"group_id":c["group_id"],"origin":c["session_origin"]},{**p2,"group_id":group_id,"origin":origin},starter,now+int(self.cfg("duel_turn_timeout_seconds",group_id,120)))
+            b=self.db.get_duel(battle_id); first=b["p1_name"] if b["turn_user_id"]==b["p1_user_id"] else b["p2_name"]
+            text=f"⚔️【跨群决斗 #{battle_id}】匹配成功！\n{b['p1_name']} VS {b['p2_name']}\n\n🔥 {first} 先手。\n使用 `/决斗攻击`、`/决斗技能 火球` 或 `/决斗防御`。"
+            return text
+        self.db.enqueue_duel(user_id,group_id,origin,name,rating,now+int(self.cfg("duel_queue_timeout_seconds",group_id,180)))
+        return f"🔎 已进入跨群决斗匹配队列！\nUID：{p['player_uid']}｜积分：{rating}\n匹配范围：±{int(self.cfg('duel_match_rating_range',group_id,200))}\n匹配成功后机器人会通知你。"
+
+    def _duel_side(self,b,user_id):
+        return "p1" if b["p1_user_id"]==user_id else "p2"
+
+    def duel_status(self,user_id:str)->str:
+        b=self.db.get_active_duel_for_user(user_id)
+        if not b:
+            q=self.db.get_duel_queue_user(user_id)
+            return "⏳ 你正在匹配中。" if q else "⚔️ 当前没有进行中的决斗。"
+        me=self._duel_side(b,user_id); op="p2" if me=="p1" else "p1"
+        turn="轮到你" if b["turn_user_id"]==user_id else f"等待 {b[op+'_name']} 行动"
+        return f"⚔️【决斗 #{b['id']}】\n你：{b[me+'_name']} ❤️ {b[me+'_hp']}/{b[me+'_max_hp']}\n对手：{b[op+'_name']} ❤️ {b[op+'_hp']}/{b[op+'_max_hp']}\n回合：{b['round_no']}｜{turn}\n\n操作：/决斗攻击｜/决斗技能 技能名｜/决斗防御"
+
+    def duel_action(self,user_id:str,action:str="attack",skill_id:str="") -> tuple[str,dict|None]:
+        b=self.db.get_active_duel_for_user(user_id)
+        if not b: return "⚔️ 当前没有进行中的决斗。",None
+        now=utc_ts()
+        if int(b["expires_at"])<=now:
+            self.db.update_duel(b["id"],state="finished",turn_user_id=None,last_action_text="回合超时",result_json=json.dumps({"result":"draw","reason":"timeout"},ensure_ascii=False))
+            self._finish_duel_draw(b)
+            return "⏱️ 本回合等待超时，决斗以平局结束。",self.db.get_duel(b["id"])
+        if b["turn_user_id"]!=user_id: return "⏳ 现在不是你的回合，请等待对手行动。",None
+        me=self._duel_side(b,user_id); op="p2" if me=="p1" else "p1"
+        mh=int(b[me+"_hp"]); oh=int(b[op+"_hp"]); ms=int(b[me+"_stamina"])
+        stats=self._duel_stats(user_id); target=self._duel_stats(b[op+"_user_id"])
+        timeout=int(self.cfg("duel_turn_timeout_seconds",b[me+"_group_id"],120))
+
+        if action=="guard":
+            self.db.update_duel(b["id"],**{
+                me+"_guard":1, me+"_stamina":min(100,ms+8),
+                "turn_user_id":b[op+"_user_id"], "round_no":int(b["round_no"])+1,
+                "expires_at":now+max(30,timeout),
+                "last_action_text":f"{b[me+'_name']} 防御",
+            })
+            return f"🛡️ {b[me+'_name']} 进入防御姿态，恢复 8 战斗体力。\n➡️ 下一回合：{b[op+'_name']}",self.db.get_duel(b["id"])
+
+        action_name="普通攻击"; sk=None; ms_before=ms
+        if action=="skill":
+            sk=SKILLS.get(skill_id)
+            if not sk: return "❌ 未找到这个技能。输入 `/技能` 查看。",None
+            if skill_id!="普攻" and not any(r["skill_id"]==skill_id and r["equipped"] for r in self.db.get_skills(user_id)):
+                return "❌ 这个技能不在你的技能栏。先使用 `/技能装备 技能名`。",None
+            cost=int(sk.get("cost",0))
+            if ms<cost: return f"❤️ 战斗体力不足，需要 {cost}，当前 {ms}。",None
+            cd=self.db.skill_cooldown_remaining(user_id,skill_id)
+            if cd:return f"⏳ 技能冷却中，还需 {cd} 秒。",None
+            self.db.set_skill_cooldown(user_id,skill_id,int(sk.get("cooldown",0)))
+            ms-=cost
+            action_name=sk["name"]
+            if sk.get("type")=="guard":
+                self.db.update_duel(b["id"],**{
+                    me+"_guard":1, me+"_stamina":min(100,ms),
+                    "turn_user_id":b[op+"_user_id"], "round_no":int(b["round_no"])+1,
+                    "expires_at":now+max(30,timeout),
+                    "last_action_text":f"{b[me+'_name']} 使用 {action_name}",
+                })
+                return f"🛡️ {b[me+'_name']} 使用【{action_name}】进入强化防御！\n❤️ 战斗体力：{ms}/100\n➡️ 下一回合：{b[op+'_name']}",self.db.get_duel(b["id"])
+        else:
+            sk=SKILLS["普攻"]
+
+        power=float(sk.get("power",1.0))
+        hits=max(1,int(sk.get("hits",1)))
+        total_damage=0; crit_count=0; dodge_count=0
+        for _ in range(hits):
+            if random.random()*100<float(target["dodge"]):
+                dodge_count+=1; continue
+            damage=max(1,int(stats["attack"]*power+random.randint(-5,10)-target["defense"]*0.45))
+            if random.random()*100<float(stats["crit"]):
+                damage=max(1,int(damage*1.8)); crit_count+=1
+            total_damage += damage
+        damage=max(0,total_damage)
+        extra=[]
+        if int(b[op+"_guard"]):
+            damage=max(0,int(damage*0.45)); extra.append("🛡️ 对手防御，伤害降低 55%")
+        oh=max(0,oh-damage)
+        mh_after=mh
+        lifesteal_heal=0
+        if sk.get("type")=="lifesteal" and damage>0:
+            lifesteal_heal=max(1,int(damage*float(sk.get("heal",0.28))))
+            mh_after=min(int(b[me+"_max_hp"]),mh+lifesteal_heal)
+            extra.append(f"🩸 吸血恢复 {lifesteal_heal} 生命")
+        if dodge_count: extra.append(f"💨 {dodge_count} 次被闪避")
+        if crit_count: extra.append(f"💥 暴击 ×{crit_count}")
+        extra_text=(" ｜".join(extra)) if extra else ""
+
+        fields={
+            op+"_hp":oh, me+"_hp":mh_after, me+"_stamina":ms,
+            me+"_guard":0, op+"_guard":0,
+            "updated_at":datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "last_action_text":f"{b[me+'_name']} {action_name} -{damage}",
+        }
+        if oh<=0:
+            winner=user_id; loser=b[op+"_user_id"]
+            fields.update(state="finished",winner_user_id=winner,loser_user_id=loser,turn_user_id=None,expires_at=0,
+                          result_json=json.dumps({"result":"win","damage":damage,"action":action_name},ensure_ascii=False))
+            self.db.update_duel(b["id"],**fields)
+            loser_group=b[op+"_group_id"]
+            death_text=self._finish_duel_stats(winner,loser,loser_group)
+            return f"🏆【决斗结束】 {b[me+'_name']} 获胜！\n⚔️ {action_name} 造成 {damage} 伤害。" + (f"\n📌 {extra_text}" if extra_text else "") + f"\n{death_text}\n💬 双方可在 {int(self.cfg('duel_message_window_seconds',None,300))} 秒内使用 `/战后留言 内容` 给对手留言。",self.db.get_duel(b["id"])
+
+        fields.update(turn_user_id=b[op+"_user_id"],round_no=int(b["round_no"])+1,expires_at=now+max(30,timeout))
+        self.db.update_duel(b["id"],**fields)
+        nb=self.db.get_duel(b["id"])
+        summary=(f"\n📌 {extra_text}" if extra_text else "")
+        return f"⚔️ {b[me+'_name']} 使用【{action_name}】造成 {damage} 伤害！{summary}\n❤️ {b[op+'_name']}：{oh}/{b[op+'_max_hp']}\n❤️ 你的战斗生命：{mh_after}/{b[me+'_max_hp']}\n➡️ 下一回合：{b[op+'_name']}",nb
+
+    def _finish_duel_draw(self,b):
+        for uid in (b["p1_user_id"],b["p2_user_id"]):
+            p=self.db.get_player("__GLOBAL_USER__",uid)
+            if p:
+                group_id=b["p1_group_id"] if uid==b["p1_user_id"] else b["p2_group_id"]
+                self.db.raw.set_global_player_fields(uid,{"battle_draws":int(p["battle_draws"])+1,"pvp_streak":0,"last_combat_group_id":group_id,"last_combat_at":utc_ts_iso()})
+
+    def _finish_duel_stats(self,winner,loser,loser_group_id):
+        a=self.db.get_player("__GLOBAL_USER__",winner); d=self.db.get_player("__GLOBAL_USER__",loser)
+        k=int(self.cfg("duel_rating_delta",None,25))
+        winner_group=str(a["last_combat_group_id"] or loser_group_id)
+        self.db.raw.set_global_player_fields(winner,{"battle_wins":int(a["battle_wins"])+1,"battle_kills":int(a["battle_kills"])+1,"pvp_rating":int(a["pvp_rating"])+k,"pvp_streak":int(a["pvp_streak"])+1,"last_combat_group_id":winner_group,"last_combat_at":utc_ts_iso()})
+        self.db.raw.set_global_player_fields(loser,{"battle_losses":int(d["battle_losses"])+1,"battle_deaths":int(d["battle_deaths"])+1,"pvp_rating":max(0,int(d["pvp_rating"])-k),"pvp_streak":0,"hp":0,"death_state":0,"respawn_at":0,"last_combat_group_id":loser_group_id,"last_combat_at":utc_ts_iso()})
+        return self._handle_death(loser_group_id,loser,"跨群决斗失败")
+
+    def duel_message(self,user_id:str,message:str)->tuple[str,dict|None,int|None]:
+        b=self.db.latest_finished_duel(user_id,int(self.cfg("duel_message_window_seconds",None,300)))
+        if not b:return "💬 最近没有可留言的决斗。",None,None
+        recipient=b["p2_user_id"] if b["p1_user_id"]==user_id else b["p1_user_id"]
+        msg_id=self.db.insert_duel_message(b["id"],user_id,recipient,message)
+        sender=b["p1_name"] if b["p1_user_id"]==user_id else b["p2_name"]
+        return f"💬 留言已进入转发队列，将发送给 {sender}。",b,msg_id
+
+    def _handle_death(self, group_id: str, user_id: str, reason: str = "战斗") -> str:
+        p=self.db.get_player("__GLOBAL_USER__",user_id)
+        if not p:return ""
+        now=utc_ts()
+        self.db.raw.set_global_player_fields(user_id,{
+            "hp":0,"death_state":1,"respawn_at":0,
+            "last_combat_group_id":group_id,"last_combat_at":utc_ts_iso(),
+        })
+        cost=max(0,int(self.cfg("revive_item_cost",group_id,1800)))
+        auto=bool(self.cfg("auto_buy_revive_item",group_id,True))
+        p=self.db.get_player("__GLOBAL_USER__",user_id) or p
+        if auto and int(p["coins"])>=cost:
+            charged=self.db.wallet_change("__GLOBAL_USER__",user_id,coins_delta=-cost,kind="auto_revive_purchase",note=f"{reason}后自动购买复活药剂")
+            if charged:
+                self.db.add_item("__GLOBAL_USER__",user_id,"revive_potion","复活药剂",1)
+                revived=self.use_item(group_id,user_id,str(p["name"] or "冒险者"),"revive_potion",1)
+                return f"💀 你因{reason}倒下。\n🧪 金币足够，系统已自动购买复活药剂并立即使用。\n💰 -{cost} 金币\n" + revived.text
+        delay=max(10,int(self.cfg("respawn_countdown_seconds",group_id,300)))
+        self.db.raw.set_global_player_fields(user_id,{"hp":0,"death_state":1,"respawn_at":now+delay,"last_combat_group_id":group_id,"last_combat_at":utc_ts_iso()})
+        return f"💀 你因{reason}死亡！\n🧪 复活药剂价格：{cost} 金币。\n💰 当前金币不足或未启用自动购买。\n⏳ {delay} 秒后自动复活。\n也可以输入 `/复活状态` 查看倒计时，或准备复活药剂后输入 `/使用 revive_potion 1`。"
+
+    def death_status(self,group_id,user_id)->str:
+        p=self.db.get_player("__GLOBAL_USER__",user_id)
+        if not p:return "❌ 玩家不存在。"
+        if not int(p["death_state"]):return "❤️ 你目前没有死亡。"
+        left=max(0,int(p["respawn_at"])-utc_ts())
+        if left<=0:
+            hp=max(1,int(int(p["max_hp"])*float(self.cfg("respawn_hp_percent",group_id,0.5))))
+            self.db.raw.set_global_player_fields(user_id,{"hp":hp,"death_state":0,"respawn_at":0,"revive_count":int(p["revive_count"])+1,"last_combat_group_id":group_id,"last_combat_at":utc_ts_iso()})
+            return f"✨ 复活成功！\n❤️ 战斗生命：{hp}/{p['max_hp']}"
+        return f"💀 你已死亡。\n⏳ 自动复活倒计时：{left} 秒\n🧪 有复活药剂可用：`/使用 revive_potion 1`"
 
     def upgrade_equipment(self, group_id: str, user_id: str, equipment_id: int, name: str) -> Result:
         if not bool(self.cfg("equipment_enabled", group_id, True)):
