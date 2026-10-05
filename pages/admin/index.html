@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>群聊世界 · ysgl 控制中心</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="./logo.png" alt="群聊世界" class="brand-logo" />
+        <div>
+          <div class="brand-title">群聊世界</div>
+          <div class="brand-sub">ysgl · Control Center</div>
+        </div>
+      </div>
+      <div class="authority-card">
+        <div class="eyebrow">ACCESS LEVEL</div>
+        <div class="authority-title">插件超级管理员</div>
+        <div class="authority-copy">独立于会话管理员的高权限管理层</div>
+      </div>
+      <nav id="nav" class="nav"></nav>
+      <div class="sidebar-foot">
+        <div>作者：<b>ysgl</b></div>
+        <div id="versionText">群聊世界 V1.4.0</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">ASTRBOT PLUGIN PAGE</div>
+          <h1 id="pageTitle">概览</h1>
+          <p id="pageDesc">世界状态、活跃度、经济与系统健康度。</p>
+        </div>
+        <div class="top-actions">
+          <select id="groupSelect" title="群世界操作目标；玩家中心不按群拆分"></select>
+          <button class="ghost" id="refreshBtn">刷新数据</button>
+          <button class="primary" id="exportBtn">导出数据</button>
+        </div>
+      </header>
+
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="loginOverlay" class="overlay hidden">
+    <div class="login-card">
+      <div class="login-mark">🌎</div>
+      <h2>群聊世界管理中心</h2>
+      <p>这里是独立的插件高权限管理入口。请输入 Web 管理口令继续。</p>
+      <input id="loginPassword" type="password" placeholder="Web 管理口令" autocomplete="current-password" />
+      <button id="loginBtn" class="primary wide">解锁管理中心</button>
+      <div id="loginHint" class="hint"></div>
+    </div>
+  </div>
+
+
+  <div id="playerModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><div><div class="eyebrow">PLAYER EDITOR</div><h2>编辑玩家数据</h2><p id="playerModalUser" class="muted"></p></div><button id="playerModalClose" class="ghost">关闭</button></div>
+      <div class="form-grid">
+        <label>昵称<input id="pf_name" type="text"></label>
+        <label>等级<input id="pf_level" type="number" min="1" max="999"></label>
+        <label>经验<input id="pf_exp" type="number" min="0"></label>
+        <label>金币<input id="pf_coins" type="number" min="0"></label>
+        <label>钻石<input id="pf_gems" type="number" min="0"></label>
+        <label>当前体力<input id="pf_stamina" type="number" min="0"></label>
+        <label>战斗生命<input id="pf_hp" type="number" min="0"></label>
+        <label>最大生命<input id="pf_max_hp" type="number" min="1"></label>
+        <label>最大体力<input id="pf_max_stamina" type="number" min="1"></label>
+        <label>幸运<input id="pf_luck" type="number" min="0"></label>
+        <label>声望<input id="pf_renown" type="number" min="0"></label>
+        <label>职业<input id="pf_profession" type="text"></label>
+        <label>称号<input id="pf_title" type="text"></label>
+        <label>连续签到<input id="pf_streak" type="number" min="0"></label>
+        <label>总签到<input id="pf_total_checkin" type="number" min="0"></label>
+        <label>教程状态<select id="pf_tutorial_status"><option value="pending">进行中</option><option value="completed">已完成</option><option value="skipped">已跳过</option></select></label>
+        <label>教程页<input id="pf_tutorial_step" type="number" min="0" max="10"></label>
+      </div>
+      <div class="modal-actions"><button id="playerSave" class="primary">保存全部数据</button><button id="playerResetTutorial" class="ghost">仅重开教程</button></div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
