@@ -24,7 +24,7 @@
       <nav id="nav" class="nav"></nav>
       <div class="sidebar-foot">
         <div>作者：<b>ysgl</b></div>
-        <div id="versionText">群聊世界 V1.6.2</div>
+        <div id="versionText">群聊世界 V1.8.1</div>
       </div>
     </aside>
 
@@ -38,7 +38,8 @@
         <div class="top-actions">
           <select id="groupSelect" title="群世界操作目标；玩家中心不按群拆分"></select>
           <button class="ghost" id="refreshBtn">刷新数据</button>
-          <button class="ghost" id="importBtn">导入数据</button><button class="primary" id="exportBtn">导出数据</button>
+          <button class="ghost" id="importBtn">导入数据</button>
+          <button class="primary" id="exportBtn">导出数据</button>
         </div>
       </header>
 
@@ -61,12 +62,13 @@
 
   <div id="importModal" class="modal hidden">
     <div class="modal-card">
-      <div class="modal-head"><div><div class="eyebrow">DATA IMPORT</div><h2>导入数据</h2><p class="muted">支持本插件导出的 JSON 快照，也兼容 V1.5 旧版导出文件。导入前会自动生成安全备份。</p></div><button id="importModalClose" class="ghost">关闭</button></div>
+      <div class="modal-head"><div><div class="eyebrow">DATA IMPORT</div><h2>导入数据</h2><p class="muted">支持本插件导出的 JSON 快照，并兼容 V1.5 旧版导出文件。导入前会自动生成安全备份。</p></div><button id="importModalClose" class="ghost">关闭</button></div>
       <div class="form-grid">
         <label>选择 JSON 文件<input id="importFile" type="file" accept="application/json,.json"></label>
         <label style="grid-column:1/-1">或直接粘贴 JSON<textarea id="importText" rows="12" placeholder="把 world-export-*.json 内容粘贴到这里"></textarea></label>
+        <label style="display:flex;align-items:center;gap:8px;grid-column:1/-1"><input id="importConfig" type="checkbox" checked> 同时恢复快照中的插件配置（已加密/隐藏的密码等敏感项不会被覆盖）</label>
       </div>
-      <div class="modal-actions"><button id="importRun" class="primary">开始导入</button><button id="importCancel" class="ghost">取消</button></div>
+      <div class="modal-actions"><button id="importRun" class="primary">开始导入并自动备份</button><button id="importCancel" class="ghost">取消</button></div>
       <div id="importHint" class="hint"></div>
     </div>
   </div>
@@ -140,7 +142,6 @@
         <label>随机 NPC<input id="gf_npc_enabled" type="checkbox"></label>
         <label>NPC触发概率<input id="gf_npc_chance" type="number" min="0" max="100"></label>
         <label>NPC最短间隔(分钟)<input id="gf_npc_interval" type="number" min="5" max="1440"></label>
-        <label>本群 AI<input id="gf_ai_enabled" type="checkbox"></label>
       </div>
       <div class="modal-actions"><button id="groupSave" class="primary">保存世界设置</button><button id="groupSpawnNpc" class="ghost">立即召唤 NPC</button><button id="groupEndEvent" class="ghost">结束当前事件</button><button id="groupClearNpc" class="ghost">让 NPC 离开</button></div>
     </div>
