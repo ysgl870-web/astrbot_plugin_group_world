@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>群聊世界 · ysgl 控制中心</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=1.11.29" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -21,10 +21,10 @@
         <div class="authority-title">插件超级管理员</div>
         <div class="authority-copy">独立于会话管理员的高权限管理层</div>
       </div>
-      <nav id="nav" class="nav"></nav>
+      <nav id="nav" class="nav"><button type="button" data-tab="menu">🖼️ <span>帮助菜单</span></button></nav>
       <div class="sidebar-foot">
         <div>作者：<b>ysgl</b></div>
-        <div id="versionText">群聊世界 V1.8.1</div>
+        <div id="versionText">群聊世界 V1.11.29</div>
       </div>
     </aside>
 
@@ -38,6 +38,7 @@
         <div class="top-actions">
           <select id="groupSelect" title="群世界操作目标；玩家中心不按群拆分"></select>
           <button class="ghost" id="refreshBtn">刷新数据</button>
+          <button class="ghost" id="menuQuickBtn">🖼️ 帮助菜单</button>
           <button class="ghost" id="importBtn">导入数据</button>
           <button class="primary" id="exportBtn">导出数据</button>
         </div>
@@ -146,6 +147,6 @@
       <div class="modal-actions"><button id="groupSave" class="primary">保存世界设置</button><button id="groupSpawnNpc" class="ghost">立即召唤 NPC</button><button id="groupEndEvent" class="ghost">结束当前事件</button><button id="groupClearNpc" class="ghost">让 NPC 离开</button></div>
     </div>
   </div>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=1.11.29"></script>
 </body>
 </html>
