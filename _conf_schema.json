@@ -337,6 +337,44 @@
       "step": 0.01
     }
   },
+  "crafting_enabled": {
+    "description": "🛠️ 启用装备合成系统",
+    "type": "bool",
+    "default": true
+  },
+  "crafting_auto_enabled": {
+    "description": "🛠️ 允许 /自动合成 自动选择最高级可制作装备",
+    "type": "bool",
+    "default": true
+  },
+  "crafting_max_batch": {
+    "description": "🛠️ 单次合成最大数量",
+    "type": "int",
+    "default": 5,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "crafting_recipe_json": {
+    "description": "🛠️ 自定义装备合成配方 JSON（覆盖同 ID 内置配方）",
+    "type": "text",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
+  },
+  "revive_equipment_hp_percent": {
+    "description": "🕊️ 装备触发复活后的生命比例",
+    "type": "float",
+    "default": 0.35,
+    "slider": {
+      "min": 0.1,
+      "max": 1.0,
+      "step": 0.05
+    }
+  },
   "shop_enabled": {
     "description": "🏪 启用商店",
     "type": "bool",
@@ -1199,5 +1237,112 @@
     "invisible": true,
     "description": "☁️ 当前选择的公开 JSON 数据包编号",
     "hint": "可在“☁️ 云端玩法”分区勾选多个公开 JSON；这里只保存编号，不执行任意代码。"
+  },
+  "maintenance_auto_cleanup": {
+    "type": "bool",
+    "default": true,
+    "label": "自动清理缓存",
+    "description": "按每天指定时间自动清理缓存目录及可重建云端缓存。"
+  },
+  "maintenance_cleanup_time": {
+    "type": "string",
+    "default": "04:30",
+    "label": "自动清理时间",
+    "description": "服务器本地时间，格式 HH:MM。"
+  },
+  "maintenance_cache_retention_days": {
+    "type": "int",
+    "default": 7,
+    "label": "缓存保留天数",
+    "description": "手动/自动清理时，超过该天数的缓存文件才会删除。",
+    "slider": {
+      "min": 0,
+      "max": 365,
+      "step": 1
+    }
+  },
+  "group_broadcast_default_message": {
+    "type": "text",
+    "default": "📢 群聊世界活动提醒：输入 /群聊世界状态 查看服务器状态。",
+    "label": "群发默认消息",
+    "description": "逐群群发系统未单独设置消息时使用。"
+  },
+  "group_broadcast_default_interval_minutes": {
+    "type": "int",
+    "default": 120,
+    "label": "群发默认间隔（分钟）",
+    "description": "兼容旧版逐群群发的默认间隔（分钟）。新的独立群发中心使用秒级群间隔，可在 Web 管理页直接配置。",
+    "slider": {
+      "min": 1,
+      "max": 10080,
+      "step": 1
+    }
+  },
+  "broadcast_campaign_defaults": {
+    "type": "text",
+    "default": "{\"group_interval_seconds\": 1, \"loop_interval_minutes\": 1}",
+    "description": "独立群发中心默认参数说明：立即模式群间隔最低 1 秒；循环模式群间隔最低 1 秒、循环间隔最低 1 分钟。",
+    "invisible": true
+  },
+  "help_menu_image_enabled": {
+    "type": "bool",
+    "default": true,
+    "label": "帮助菜单图片",
+    "description": "使用群聊世界菜单图片作为 /帮助 的可视化入口。",
+    "hint": "关闭后 /帮助 仅发送文字。",
+    "invisible": true
+  },
+  "help_menu_image_first": {
+    "type": "bool",
+    "default": true,
+    "label": "菜单图片优先发送",
+    "description": "触发 /帮助 时先发送菜单图片，再发送文字帮助。",
+    "hint": "关闭后会先发文字帮助，再发菜单图片。",
+    "invisible": true
+  },
+  "help_menu_text_enabled": {
+    "type": "bool",
+    "default": true,
+    "label": "发送文字帮助",
+    "description": "触发 /帮助 时是否发送完整文字命令说明。图片发送失败时自动使用文字兜底。",
+    "hint": "关闭后默认只发送图片；如果图片发送失败，仍会临时发送文字帮助。",
+    "invisible": true
+  },
+  "help_menu_settings": {
+    "type": "object",
+    "description": "🖼️ 帮助菜单设置",
+    "hint": "独立的 /帮助 菜单配置分区。可选择发送图片、文字以及发送顺序；若图片实际发送失败，插件会自动使用文字帮助兜底。自定义菜单图片请在群聊世界管理中心的“帮助菜单”分区上传。",
+    "items": {
+      "image_enabled": {
+        "type": "bool",
+        "default": true,
+        "description": "发送帮助菜单图片",
+        "hint": "开启后 /帮助 会使用内置或自定义菜单图片。"
+      },
+      "text_enabled": {
+        "type": "bool",
+        "default": true,
+        "description": "发送文字帮助（同时作为图片失败时的文字兜底开关）",
+        "hint": "关闭后 /帮助 不发送文字；图片发送失败时也不会再发送文字兜底。"
+      },
+      "image_first": {
+        "type": "bool",
+        "default": true,
+        "description": "图片优先发送",
+        "hint": "开启：先发图片再发文字；关闭：先发文字再发图片。"
+      }
+    },
+    "default": {
+      "image_enabled": true,
+      "text_enabled": true,
+      "image_first": true
+    },
+    "obvious_hint": true
+  },
+  "_help_menu_config_migrated": {
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "description": "帮助菜单配置迁移标记"
   }
 }

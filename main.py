@@ -1,23 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 import time
 import secrets
+import os
+import shutil
+import tracemalloc
+import resource
 from urllib.parse import quote
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional metrics dependency
+    psutil = None
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+try:
+    import astrbot.api.message_components as Comp
+except Exception:  # pragma: no cover - compatibility fallback
+    Comp = None
 from astrbot.api.star import Context, Star
 
 try:
-    from astrbot.api.web import error_response, file_response, json_response, request
+    from astrbot.api.web import error_response, file_response, json_response, request, PluginUploadFile
 except Exception:  # pragma: no cover - compatibility fallback
-    error_response = file_response = json_response = request = None
+    try:
+        from astrbot.api.web import error_response, file_response, json_response, request
+    except Exception:
+        error_response = file_response = json_response = request = None
+    PluginUploadFile = None
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -40,7 +58,7 @@ CLOUD_DEFAULT_URL = "https://ysgl.bot.cd/astrbot"
 
 
 class Main(Star):
-    """群聊世界 V1.9.2.
+    """群聊世界 V1.11.29.
 
     The plugin deliberately relies on AstrBot's unified event/message layer.
     This keeps the game logic independent from QQ's transport while declaring
@@ -53,17 +71,23 @@ class Main(Star):
         self._closed = False
         self._task: asyncio.Task | None = None
         self._web_tokens: dict[str, tuple[str, int]] = {}
+        self._web_write_sessions: dict[str, int] = {}
         self._last_proactive_broadcast_at = 0.0
         self._web_action_guard: dict[tuple[str, str], float] = {}
         self._duel_lock = asyncio.Lock()
+        self._broadcast_campaign_tasks: dict[int, asyncio.Task] = {}
+        self._broadcast_oneoff_tasks: set[asyncio.Task] = set()
         self._cloud_data: dict[str, Any] = {}
         self._cloud_last_sync_at = 0.0
         self._cloud_sync_lock = asyncio.Lock()
+        self._last_auto_cleanup_date = ""
+        self._memory_trace_enabled = False
         self._schema = {}
         try:
             self._schema = json.loads((Path(__file__).parent / "_conf_schema.json").read_text(encoding="utf-8"))
         except Exception:
             self._schema = {}
+        self._migrate_help_menu_config()
 
         if get_astrbot_data_path:
             base = Path(get_astrbot_data_path())
@@ -71,6 +95,14 @@ class Main(Star):
             base = Path("data")
         self.data_dir = base / "plugin_data" / PLUGIN_NAME
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir = self.data_dir / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if not tracemalloc.is_tracing():
+                tracemalloc.start(10)
+                self._memory_trace_enabled = True
+        except Exception:
+            self._memory_trace_enabled = False
         self._cloud_cache_path = self.data_dir / "cloud-data.json"
         self._cloud_data = self._load_cloud_cache()
         self.db = Database(self.data_dir / "group_world.db")
@@ -95,6 +127,146 @@ class Main(Star):
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    # ------------------------- native config: help menu -------------------------
+
+    def _migrate_help_menu_config(self) -> None:
+        """兼容旧版平铺配置，但绝不覆盖已经存在的新嵌套配置。
+
+        AstrBot 会按 _conf_schema.json 自动创建 object 配置。旧版本曾把三个
+        菜单开关放在根级配置中；升级时仅在嵌套配置缺失/为空时迁移旧值，避免
+        每次加载都把用户刚刚在原生配置页修改的值覆盖回去。
+        """
+        try:
+            section = self.config.get("help_menu_settings")
+            defaults = {"image_enabled": True, "image_first": True, "text_enabled": True}
+            legacy = {
+                "image_enabled": self.config.get("help_menu_image_enabled", None),
+                "image_first": self.config.get("help_menu_image_first", None),
+                "text_enabled": self.config.get("help_menu_text_enabled", None),
+            }
+            had_valid_nested = isinstance(section, dict) and any(k in section for k in defaults)
+            if not had_valid_nested:
+                section = dict(defaults)
+                for key, value in legacy.items():
+                    if value is not None:
+                        section[key] = bool(value)
+            else:
+                section = {**defaults, **dict(section)}
+
+            self.config["help_menu_settings"] = section
+            # Hidden legacy keys remain synchronized for older integrations, but they
+            # are never allowed to override the nested section.
+            self.config["help_menu_image_enabled"] = bool(section["image_enabled"])
+            self.config["help_menu_image_first"] = bool(section["image_first"])
+            self.config["help_menu_text_enabled"] = bool(section["text_enabled"])
+            if "_help_menu_config_migrated" in self.config:
+                self.config["_help_menu_config_migrated"] = True
+            self._save_config_object(self.config)
+        except Exception as exc:
+            logger.warning("[群聊世界] 帮助菜单配置迁移失败：%s", exc)
+
+    def _refresh_help_menu_config_from_disk(self) -> None:
+        """读取 AstrBot 当前配置文件中的菜单分区，支持保存后无需重载插件。"""
+        try:
+            config_path = getattr(self.config, "config_path", None)
+            if not config_path:
+                return
+            path = Path(str(config_path))
+            if not path.is_file():
+                return
+            raw = path.read_text(encoding="utf-8-sig")
+            data = json.loads(raw)
+            section = data.get("help_menu_settings") if isinstance(data, dict) else None
+            if not isinstance(section, dict):
+                return
+            normalized = {
+                "image_enabled": bool(section.get("image_enabled", True)),
+                "text_enabled": bool(section.get("text_enabled", True)),
+                "image_first": bool(section.get("image_first", True)),
+            }
+            self.config["help_menu_settings"] = normalized
+            # Do not let legacy flat keys override the native nested section.
+            self.config["help_menu_image_enabled"] = normalized["image_enabled"]
+            self.config["help_menu_text_enabled"] = normalized["text_enabled"]
+            self.config["help_menu_image_first"] = normalized["image_first"]
+        except Exception as exc:
+            logger.debug("[群聊世界] 刷新帮助菜单原生配置失败：%s", exc)
+
+    def _help_menu_value(self, key: str, default: Any) -> Any:
+        section = self.config.get("help_menu_settings")
+        if isinstance(section, dict) and key in section:
+            return section.get(key)
+        return self.config.get(f"help_menu_{key}", default)
+
+    def _set_help_menu_config(self, **changes: Any) -> None:
+        section = self.config.get("help_menu_settings")
+        if not isinstance(section, dict):
+            section = {}
+        else:
+            section = dict(section)
+        mapping = {
+            "image_enabled": "help_menu_image_enabled",
+            "image_first": "help_menu_image_first",
+            "text_enabled": "help_menu_text_enabled",
+        }
+        for key, value in changes.items():
+            if key not in mapping:
+                continue
+            section[key] = bool(value)
+            self.config[mapping[key]] = bool(value)
+        self.config["help_menu_settings"] = section
+
+    # ------------------------- help menu image -------------------------
+
+    @property
+    def _menu_default_path(self) -> Path:
+        return Path(__file__).parent / "menu_default.jpg"
+
+    @property
+    def _menu_custom_paths(self) -> tuple[Path, ...]:
+        return tuple(self.data_dir / f"menu_image{ext}" for ext in (".jpg", ".png", ".webp"))
+
+    def _menu_image_path(self) -> Path | None:
+        if not bool(self._help_menu_value("image_enabled", True)):
+            return None
+        for custom in self._menu_custom_paths:
+            if custom.exists() and custom.is_file():
+                return custom
+        default = self._menu_default_path
+        if default.exists() and default.is_file():
+            return default
+        return None
+
+    @staticmethod
+    def _save_config_object(config: Any) -> bool:
+        try:
+            save = getattr(config, "save_config", None)
+            if callable(save):
+                save()
+            return True
+        except Exception:
+            return False
+
+    def _menu_status(self, include_image: bool = False) -> dict[str, Any]:
+        path = self._menu_image_path()
+        payload = {
+            "enabled": bool(self._help_menu_value("image_enabled", True)),
+            "first": bool(self._help_menu_value("image_first", True)),
+            "send_image": bool(self._help_menu_value("image_enabled", True)),
+            "send_text": bool(self._help_menu_value("text_enabled", True)),
+            "has_custom": any(p.exists() for p in self._menu_custom_paths),
+            "filename": path.name if path else "",
+            "path_available": bool(path),
+        }
+        if include_image and path:
+            try:
+                raw = path.read_bytes()
+                mime = {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".webp":"image/webp"}.get(path.suffix.lower(), "application/octet-stream")
+                payload["image_data_url"] = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+            except Exception as exc:
+                payload["image_error"] = str(exc)
+        return payload
 
     def _cloud_enabled(self) -> bool:
         return bool(self.config.get("cloud_enabled", False) and str(self.config.get("cloud_api_key") or "").strip())
@@ -128,6 +300,7 @@ class Main(Star):
                 self._cloud_data['selected_package_nos'] = selected
                 self._cloud_data.setdefault("custom_json_packages", [])
                 self._cloud_data.setdefault("selected_packages", [])
+                self._cloud_data.setdefault("crafting_recipes", {})
                 self._cloud_last_sync_at = time.monotonic()
                 self._apply_cloud_data_to_engine()
                 logger.info(
@@ -179,7 +352,7 @@ class Main(Star):
             existing = {str(x.get("package_no") or x.get("id")) for x in self._cloud_data["custom_json_packages"] if isinstance(x, dict)}
             if package_id not in existing:
                 self._cloud_data["custom_json_packages"].append(package)
-        counts = {"bosses": 0, "products": 0, "monsters": 0, "npcs": 0, "tutorials": 0}
+        counts = {"bosses": 0, "products": 0, "monsters": 0, "npcs": 0, "tutorials": 0, "crafting_recipes": 0}
         for key in ("bosses", "products", "monsters", "npcs"):
             values = payload.get(key)
             if isinstance(values, list):
@@ -193,6 +366,13 @@ class Main(Star):
                         current.append(item)
                         seen.add(ident)
                         counts[key] += 1
+        recipes = payload.get("crafting_recipes")
+        if isinstance(recipes, dict):
+            current_recipes = self._cloud_data.setdefault("crafting_recipes", {})
+            for rid, value in list(recipes.items())[:200]:
+                if str(rid).strip() and isinstance(value, dict) and value.get("name") and isinstance(value.get("materials"), dict):
+                    current_recipes[str(rid)] = dict(value)
+                    counts["crafting_recipes"] += 1
         pages = payload.get("tutorials")
         if isinstance(pages, dict):
             tutorials = self._cloud_data.setdefault("tutorials", {})
@@ -204,7 +384,7 @@ class Main(Star):
 
     def _cloud_active_merge_counts(self) -> dict[str, int]:
         data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
-        counts = {"products": 0, "bosses": 0, "monsters": 0, "npcs": 0, "tutorials": 0}
+        counts = {"products": 0, "bosses": 0, "monsters": 0, "npcs": 0, "tutorials": 0, "crafting_recipes": 0}
         selected = data.get("selected_packages", [])
         if not isinstance(selected, list):
             return counts
@@ -214,6 +394,9 @@ class Main(Star):
                 values = payload.get(key)
                 if isinstance(values, list):
                     counts[key] += sum(1 for x in values[:500] if isinstance(x, dict))
+            recipes = payload.get("crafting_recipes")
+            if isinstance(recipes, dict):
+                counts["crafting_recipes"] += sum(1 for rid, value in list(recipes.items())[:200] if str(rid).strip() and isinstance(value, dict) and value.get("name") and isinstance(value.get("materials"), dict))
             pages = payload.get("tutorials")
             if isinstance(pages, dict):
                 counts["tutorials"] += sum(1 for k, v in list(pages.items())[:100] if str(k).strip() and isinstance(v, str))
@@ -229,6 +412,7 @@ class Main(Star):
         monsters: dict[str, Any] = {}
         npcs: list[dict[str, Any]] = []
         tutorials: dict[str, str] = {}
+        crafting_recipes: dict[str, Any] = {}
 
         def merge_package_payload(pkg: dict[str, Any]) -> None:
             payload = pkg.get("payload") if isinstance(pkg.get("payload"), dict) else {}
@@ -247,6 +431,11 @@ class Main(Star):
                 for item in vals[:100]:
                     if isinstance(item, dict) and item not in npcs:
                         npcs.append(item)
+            vals = payload.get("crafting_recipes")
+            if isinstance(vals, dict):
+                for rid, item in list(vals.items())[:200]:
+                    if str(rid).strip() and isinstance(item, dict) and item.get("name") and isinstance(item.get("materials"), dict):
+                        crafting_recipes[str(rid)] = dict(item)
             vals = payload.get("tutorials")
             if isinstance(vals, dict):
                 for k, v in list(vals.items())[:100]:
@@ -273,6 +462,13 @@ class Main(Star):
             if isinstance(item, str):
                 tutorials[str(item)] = data["tutorials"][item]
 
+        # Cached crafting recipes imported directly from a package are also safe data.
+        cached_recipes = data.get("crafting_recipes")
+        if isinstance(cached_recipes, dict):
+            for rid, item in list(cached_recipes.items())[:200]:
+                if str(rid).strip() and isinstance(item, dict) and item.get("name") and isinstance(item.get("materials"), dict):
+                    crafting_recipes[str(rid)] = dict(item)
+
         # Selected JSON packages are additional content; a package can add entries but not run code.
         selected = data.get("selected_packages", [])
         if isinstance(selected, list):
@@ -291,6 +487,8 @@ class Main(Star):
                         pass
                 if safe:
                     effects[code] = safe
+
+        self.config["cloud_crafting_recipe_json"] = json.dumps(crafting_recipes, ensure_ascii=False)
 
         self.config["cloud_shop_catalog_json"] = json.dumps({
             str(code): [str(item.get("name") or "云端商品"), max(0, int(item.get("price", 0) or 0)), str(item.get("description") or item.get("intro") or "云端自定义商品")]
@@ -407,19 +605,235 @@ class Main(Star):
         footer = str(self.config.get("proactive_message_footer", "🎮 想开始游玩吗？输入 /注册 开始游玩群聊世界。") or "").strip()
         return ("\n\n" + footer) if footer else ""
 
-    async def _broadcast(self, origin: str, text: str, *, proactive: bool = False) -> bool:
+    def _mention_chain(self, user_id: str, text: str):
+        if Comp is not None:
+            try:
+                return [Comp.At(qq=str(user_id)), Comp.Plain(text)]
+            except Exception:
+                pass
+        return MessageChain().message(f"@{user_id} {text}")
+
+    async def _broadcast(self, origin: str, text: str, *, proactive: bool = False, mention_user_id: str | None = None) -> bool:
         if not origin:
             return False
         payload = text
         if proactive:
             payload = payload.rstrip() + self._proactive_footer()
         try:
-            chain = MessageChain().message(payload)
+            chain = self._mention_chain(mention_user_id, payload) if mention_user_id else MessageChain().message(payload)
             await self.context.send_message(origin, chain)
             return True
         except Exception as exc:
             logger.warning("[群聊世界] 主动消息发送失败: %s", exc)
             return False
+
+    @staticmethod
+    def _fmt_bytes(value: int | float) -> str:
+        size = float(max(0, value))
+        units = ("B", "KB", "MB", "GB", "TB")
+        for unit in units:
+            if size < 1024 or unit == units[-1]:
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    def _dir_size(self, path: Path) -> int:
+        total = 0
+        try:
+            for item in path.rglob("*"):
+                if item.is_file():
+                    try:
+                        total += item.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return total
+
+    def _system_metrics(self) -> dict[str, Any]:
+        total = available = used = 0
+        percent = 0.0
+        cpu_percent = 0.0
+        process_rss = 0
+        process_cpu = 0.0
+        if psutil is not None:
+            try:
+                mem = psutil.virtual_memory()
+                total, available, used, percent = int(mem.total), int(mem.available), int(mem.used), float(mem.percent)
+            except Exception:
+                pass
+            try:
+                cpu_percent = float(psutil.cpu_percent(interval=0.0))
+                proc = psutil.Process(os.getpid())
+                process_rss = int(proc.memory_info().rss)
+                process_cpu = float(proc.cpu_percent(interval=0.0))
+            except Exception:
+                pass
+        if not total:
+            try:
+                pages = os.sysconf("SC_PHYS_PAGES"); page_size = os.sysconf("SC_PAGE_SIZE")
+                total = int(pages * page_size)
+                process_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+                available = max(0, total - process_rss)
+                used = total - available
+                percent = (used / total * 100) if total else 0.0
+            except Exception:
+                pass
+        if not cpu_percent:
+            try:
+                load = os.getloadavg()[0]
+                cores = max(1, os.cpu_count() or 1)
+                cpu_percent = min(100.0, max(0.0, load / cores * 100.0))
+            except Exception:
+                cpu_percent = 0.0
+        trace_current = trace_peak = 0
+        if self._memory_trace_enabled:
+            try:
+                trace_current, trace_peak = tracemalloc.get_traced_memory()
+            except Exception:
+                pass
+        data_size = self._dir_size(self.data_dir)
+        cache_size = self._dir_size(self.cache_dir)
+        disk_free = 0
+        try:
+            disk_free = shutil.disk_usage(self.data_dir).free
+        except Exception:
+            pass
+        return {
+            "timestamp": int(time.time()),
+            "server": {"memory_total": total, "memory_used": used, "memory_available": available, "memory_percent": round(percent, 1), "cpu_percent": round(cpu_percent, 1), "disk_free": disk_free},
+            "process": {"pid": os.getpid(), "rss": process_rss, "cpu_percent": round(process_cpu, 1)},
+            "plugin": {"tracemalloc_current": trace_current, "tracemalloc_peak": trace_peak, "data_size": data_size, "cache_size": cache_size, "cache_dir": str(self.cache_dir)},
+        }
+
+    def _cleanup_cache(self, retention_days: int | None = None) -> dict[str, Any]:
+        days = max(0, int(retention_days if retention_days is not None else self.config.get("maintenance_cache_retention_days", 7) or 7))
+        cutoff = time.time() - days * 86400
+        removed = 0; removed_bytes = 0
+        targets: list[Path] = []
+        if self.cache_dir.exists():
+            targets.extend([x for x in self.cache_dir.rglob("*") if x.is_file()])
+        # cloud-data.json is a rebuildable cache, so it belongs to cache cleanup.
+        if self._cloud_cache_path.exists():
+            targets.append(self._cloud_cache_path)
+        seen = set()
+        for item in targets:
+            if item in seen:
+                continue
+            seen.add(item)
+            try:
+                if item.stat().st_mtime > cutoff and days > 0:
+                    continue
+                size = item.stat().st_size
+                item.unlink()
+                removed += 1; removed_bytes += size
+            except OSError:
+                continue
+        # Remove empty cache directories after cleanup.
+        try:
+            for d in sorted([x for x in self.cache_dir.rglob("*") if x.is_dir()], reverse=True):
+                try: d.rmdir()
+                except OSError: pass
+        except OSError:
+            pass
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        return {"removed": removed, "bytes": removed_bytes, "retention_days": days}
+
+    async def _maybe_auto_cleanup(self) -> None:
+        if not bool(self.config.get("maintenance_auto_cleanup", True)):
+            return
+        target = str(self.config.get("maintenance_cleanup_time", "04:30") or "04:30").strip()
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        if now.strftime("%H:%M") != target or self._last_auto_cleanup_date == today:
+            return
+        result = self._cleanup_cache()
+        self._last_auto_cleanup_date = today
+        logger.info("[群聊世界] 自动清理缓存完成：删除 %s 个文件，释放 %s", result["removed"], self._fmt_bytes(result["bytes"]))
+
+    async def _run_broadcast_oneoff(self, group_ids: list[str], message: str, group_interval_seconds: int, operator: str = "web") -> dict[str, list[str]]:
+        sent, failed, missing = [], [], []
+        for index, gid in enumerate(group_ids):
+            group = self.db.get_group(gid)
+            if not group or not group["session_origin"]:
+                missing.append(gid)
+            else:
+                ok = await self._broadcast(str(group["session_origin"]), message, proactive=False)
+                if ok:
+                    sent.append(gid)
+                    self.db.add_admin_log(gid, operator, "broadcast_immediate_send", None, message[:500])
+                else:
+                    failed.append(gid)
+            if index < len(group_ids) - 1:
+                await asyncio.sleep(max(1, int(group_interval_seconds)))
+        return {"sent": sent, "failed": failed, "missing": missing}
+
+    async def _run_broadcast_campaign(self, campaign_id: int) -> None:
+        try:
+            row = self.db.get_broadcast_campaign(campaign_id)
+            if not row or not int(row["enabled"]):
+                return
+            targets = self.db.get_broadcast_campaign_targets(campaign_id)
+            message = str(row["message"] or "").strip()
+            if not message or not targets:
+                return
+            self.db.mark_broadcast_campaign_started(campaign_id, int(time.time()))
+            sent = failed = 0
+            gap = max(1, int(row["group_interval_seconds"] or 1))
+            for idx, target in enumerate(targets):
+                current = self.db.get_broadcast_campaign(campaign_id)
+                if not current or not int(current["enabled"]):
+                    return
+                gid = str(target["group_id"] or "")
+                origin = str(target["session_origin"] or "")
+                if not origin or not int(target["group_enabled"] or 0):
+                    failed += 1
+                else:
+                    ok = await self._broadcast(origin, message, proactive=False)
+                    if ok:
+                        sent += 1
+                        self.db.add_admin_log(gid, "broadcast_campaign", "broadcast_loop_send", campaign_id, message[:500])
+                    else:
+                        failed += 1
+                if idx < len(targets) - 1:
+                    await asyncio.sleep(gap)
+            next_at = int(time.time()) + max(60, int(row["loop_interval_minutes"] or 1) * 60)
+            self.db.mark_broadcast_campaign_finished(campaign_id, next_at, sent, failed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("[群聊世界] 循环群发任务 #%s 异常：%s", campaign_id, exc)
+            row = self.db.get_broadcast_campaign(campaign_id)
+            if row and int(row["enabled"]):
+                self.db.mark_broadcast_campaign_finished(campaign_id, int(time.time()) + 60, 0, 1)
+        finally:
+            self._broadcast_campaign_tasks.pop(int(campaign_id), None)
+
+    def _schedule_due_broadcast_campaigns(self, now_ts: int) -> None:
+        for row in self.db.get_due_broadcast_campaigns(now_ts, 20):
+            cid = int(row["id"])
+            task = self._broadcast_campaign_tasks.get(cid)
+            if task and not task.done():
+                continue
+            # Reserve the next run before starting work so a long cycle never gets scheduled twice.
+            self.db.execute("UPDATE broadcast_campaigns SET next_run_at=?,updated_at=? WHERE id=? AND enabled=1", (int(now_ts) + 60, datetime.now(timezone.utc).isoformat(timespec="seconds"), cid))
+            self._broadcast_campaign_tasks[cid] = asyncio.create_task(self._run_broadcast_campaign(cid))
+
+    async def _scheduled_group_broadcasts(self, now_ts: int) -> None:
+        self._schedule_due_broadcast_campaigns(now_ts)
+        for row in self.db.get_due_group_broadcasts(now_ts, 30):
+            interval = max(1, int(row["interval_minutes"] or 60))
+            next_at = int(now_ts) + interval * 60
+            origin = str(row["session_origin"] or "")
+            if not origin:
+                self.db.mark_group_broadcast_missed(row["group_id"], next_at)
+                continue
+            ok = await self._broadcast(origin, str(row["message"]), proactive=False)
+            if ok:
+                self.db.mark_group_broadcast_sent(row["group_id"], next_at)
+            else:
+                # Retry on the next scheduler pass instead of burning the whole interval.
+                self.db.mark_group_broadcast_missed(row["group_id"], int(now_ts) + 60)
 
     async def _ai_npc_reply(self, event: AstrMessageEvent, base: str, *, story: bool = False) -> str:
         try:
@@ -464,6 +878,8 @@ class Main(Star):
             return
         if bool(self.config.get("cloud_auto_sync", True)):
             await self._cloud_sync_if_due(force=False)
+        await self._maybe_auto_cleanup()
+        await self._scheduled_group_broadcasts(int(time.time()))
         # Finish countdown-based revivals even when the player does not send a message.
         for rp in self.db.get_due_respawns(int(time.time()),100):
             try:
@@ -476,7 +892,30 @@ class Main(Star):
             except Exception as exc:
                 logger.debug("[群聊世界] 自动复活失败：%s",exc)
 
-        # Deliver cross-group duel messages to the opponent's original session.
+        # Retry cross-group duel action/result notifications that could not be
+        # delivered on the first attempt. The battle row is re-resolved so the
+        # current group session origin is used after reconnects / adapter changes.
+        for notice in self.db.get_pending_duel_notifications(50):
+            try:
+                battle=self.db.get_duel(int(notice["battle_id"]))
+                if not battle:
+                    self.db.mark_duel_notification_delivered(int(notice["id"]))
+                    continue
+                recipient=str(notice["recipient_user_id"] or "")
+                delivered=False
+                for origin in self._duel_candidate_origins(battle, recipient, str(notice["group_id"] or "")):
+                    if await self._broadcast(origin, str(notice["message"]), proactive=False, mention_user_id=recipient):
+                        delivered=True
+                        break
+                if delivered:
+                    self.db.mark_duel_notification_delivered(int(notice["id"]))
+                else:
+                    # Keep the notification for the next scheduler pass.
+                    pass
+            except Exception as exc:
+                logger.debug("[群聊世界] 决斗通知重试失败：%s", exc)
+
+        # Deliver cross-group duel messages to the opponent's current session.
         for msg in self.db.fetchall("SELECT * FROM duel_messages WHERE delivered=0 ORDER BY id ASC LIMIT 50"):
             try:
                 battle=self.db.get_duel(int(msg["battle_id"]))
@@ -616,6 +1055,20 @@ class Main(Star):
         if not self.engine.group_enabled(group_id):
             return
         try:
+            # 收件人下一条消息也会触发一次兜底投递：即使 QQ/适配器在跨群主动
+            # 推送瞬间拒绝了旧会话地址，玩家也不会永远错过“匹配成功/被攻击”提示。
+            self.db.upsert_group(group_id, event.unified_msg_origin)
+            recipient=self._user(event)
+            # duel_notifications 使用独立 outbox；这里直接按当前事件 origin 投递。
+            for notice in self.db.get_pending_duel_notifications(50):
+                if str(notice["recipient_user_id"]) != recipient:
+                    continue
+                battle=self.db.get_duel(int(notice["battle_id"]))
+                if battle and await self._broadcast(str(event.unified_msg_origin or ""), str(notice["message"]), proactive=False, mention_user_id=recipient):
+                    self.db.mark_duel_notification_delivered(int(notice["id"]))
+        except Exception as exc:
+            logger.debug("[群聊世界] 决斗收件箱兜底投递失败：%s", exc)
+        try:
             self._ensure_scheduler()
             self.db.upsert_group(group_id, event.unified_msg_origin)
             self.db.touch_message(group_id, self._user(event), event.unified_msg_origin)
@@ -623,6 +1076,36 @@ class Main(Star):
             logger.warning("[群聊世界] 统计记录失败：%s", exc)
 
     # ------------------------- player commands -------------------------
+
+    @filter.command("群聊世界状态", alias={"世界状态", "服务器状态"})
+    async def group_world_status(self, event: AstrMessageEvent):
+        """查看服务器、进程、插件内存与 CPU 状态，并优先使用 AstrBot 文转图发送。"""
+        blocked = self._disabled_or_private(event)
+        if blocked:
+            yield event.plain_result(blocked)
+            return
+        m = self._system_metrics()
+        s, p, ext = m["server"], m["process"], m["plugin"]
+        now = datetime.fromtimestamp(m["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        text = (
+            "🖥️【群聊世界 · 服务器状态】\n"
+            f"更新时间：{now}\n\n"
+            f"🧠 服务器内存：{self._fmt_bytes(s['memory_used'])} / {self._fmt_bytes(s['memory_total'])}（{s['memory_percent']:.1f}%）\n"
+            f"🟢 可用内存：{self._fmt_bytes(s['memory_available'])}\n"
+            f"⚙️ CPU：{s['cpu_percent']:.1f}%\n"
+            f"💽 磁盘可用：{self._fmt_bytes(s['disk_free'])}\n\n"
+            f"📦 插件进程内存：{self._fmt_bytes(p['rss'])}\n"
+            f"📊 插件追踪分配：{self._fmt_bytes(ext['tracemalloc_current'])}（峰值 {self._fmt_bytes(ext['tracemalloc_peak'])}）\n"
+            f"🗃️ 插件数据目录：{self._fmt_bytes(ext['data_size'])}\n"
+            f"🧹 缓存目录：{self._fmt_bytes(ext['cache_size'])}\n\n"
+            "说明：插件追踪分配为 tracemalloc 统计，并不等同于整个进程 RSS。"
+        )
+        try:
+            url = await self.text_to_image(text)
+            yield event.image_result(url)
+        except Exception as exc:
+            logger.debug("[群聊世界] 世界状态文转图失败，回退文字：%s", exc)
+            yield event.plain_result(text)
 
     @filter.command("世界", alias={"world", "群聊世界"})
     async def world(self, event: AstrMessageEvent):
@@ -635,7 +1118,7 @@ class Main(Star):
         self.db.upsert_group(group_id, event.unified_msg_origin)
         yield event.plain_result(self.engine.world_status(group_id))
 
-    @filter.command("帮助", alias={"世界帮助", "worldhelp"})
+    @filter.command("帮助", alias={"世界帮助", "worldhelp", "菜单", "世界菜单", "menu"})
     async def help(self, event: AstrMessageEvent):
         """查看群聊世界完整命令。"""
         blocked = self._disabled_or_private(event)
@@ -646,8 +1129,8 @@ class Main(Star):
             "📖 【群聊世界命令】\n\n"
             "👤 玩家：/注册 [邀请码] /我的 /签到 /邀请码 /教程 /继续教程 /跳过教程 /地图\n"
             "🗺️ 冒险：/探索 /探索 深度 /探索 危险 /钓鱼 /挖矿 /打工 /怪物\n"
-            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗匹配 /决斗状态 /决斗攻击 /决斗技能 /战后留言 /复活状态\n"
-            "🎒 物品：/背包 /商店 /购买 ID 数量 /使用 ID 数量 /装备 /穿戴 ID /强化 ID\n"
+            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗匹配 /决斗状态 /决斗攻击 /决斗技能 /决斗防御 /战后留言 /复活状态 /群聊世界状态\n"
+            "🎒 物品：/背包 /商店 /购买 ID 数量 /使用 ID 数量 /装备 /穿戴 ID /强化 ID /合成列表 /合成 ID /自动合成 /拆解 ID\n"
             "🐾 宠物：/宠物 /抽宠物 /出战宠物 ID\n"
             "⭐ 成长：/职业 /转职 职业 /任务 /任务领取 /成就\n"
             "🏆 排行：/排行榜\n"
@@ -656,7 +1139,54 @@ class Main(Star):
             "💸 社交：/转账 用户ID 金额\n\n"
             "管理员：/世界管理"
         )
-        yield event.plain_result(text)
+        image_path = self._menu_image_path()
+        send_image = bool(self._help_menu_value("image_enabled", True)) and bool(image_path)
+        send_text = bool(self._help_menu_value("text_enabled", True))
+        send_image_first = bool(self._help_menu_value("image_first", True))
+
+        async def send_text_now() -> None:
+            # 直接走 event.send()，这样适配器的真实发送异常能够被捕获。
+            await event.send(MessageChain().message(text))
+
+        async def send_image_now(path: Path) -> None:
+            if Comp is None or not hasattr(Comp, "Image"):
+                raise RuntimeError("当前 AstrBot 版本缺少 Image 消息组件。")
+            chain = MessageChain([Comp.Image.fromFileSystem(str(path))])
+            await event.send(chain)
+
+        if send_image and send_image_first:
+            try:
+                await send_image_now(image_path)
+            except Exception as exc:
+                logger.warning("[群聊世界] 菜单图片真实发送失败，自动文字兜底：%s", exc)
+                # 只有开启“发送文字帮助”时才启用文字兜底；关闭后不发送任何文字。
+                if send_text:
+                    try:
+                        await send_text_now()
+                    except Exception as text_exc:
+                        logger.error("[群聊世界] 菜单图片失败后的文字兜底也失败：%s", text_exc)
+                return
+            if send_text:
+                try:
+                    await send_text_now()
+                except Exception as exc:
+                    logger.warning("[群聊世界] 菜单文字发送失败：%s", exc)
+            return
+
+        if send_text:
+            try:
+                await send_text_now()
+            except Exception as exc:
+                logger.warning("[群聊世界] 菜单文字发送失败：%s", exc)
+
+        if send_image and not send_image_first:
+            try:
+                await send_image_now(image_path)
+            except Exception as exc:
+                logger.warning("[群聊世界] 菜单图片真实发送失败：%s", exc)
+        return
+        if False:
+            yield event.plain_result("")
 
     @filter.command("注册")
     async def register(self, event: AstrMessageEvent):
@@ -807,15 +1337,20 @@ class Main(Star):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
         args=self._args(event)
-        if not args:
-            yield event.plain_result("✨ 用法：`/技能使用 技能名`。\n先输入 `/技能` 查看并配置技能栏。")
-            return
         group=self._group(event); uid=self._user(event); name=self._name(event)
+        if args:
+            skill_id=args[0]
+        else:
+            player=self.db.get_player("__GLOBAL_USER__",uid)
+            if not player:
+                self.engine.ensure_player(group,uid,name)
+                player=self.db.get_player("__GLOBAL_USER__",uid)
+            skill_id=self.engine._pick_duel_skill(uid, player=player) or "普攻"
         monster=self.db.get_active_monster(group,uid)
         if monster:
-            result=self.engine._monster_hit(group,uid,name,args[0])
+            result=self.engine._monster_hit(group,uid,name,skill_id)
         else:
-            result=self.engine.boss_use_skill(group,uid,name,args[0])
+            result=self.engine.boss_use_skill(group,uid,name,skill_id)
         yield event.plain_result(result.text)
 
     @filter.command("战斗", alias={"战斗中心","战斗状态","combat"})
@@ -836,6 +1371,144 @@ class Main(Star):
         lines.append("\n指令：/自动战斗 开启｜/自动战斗 Boss｜/自动战斗 关闭｜/决斗 匹配｜/决斗 状态｜/复活状态")
         yield event.plain_result("\n".join(lines))
 
+    def _duel_candidate_origins(self, b, recipient_user_id: str, preferred_group_id: str = "") -> list[str]:
+        """按优先级返回对手当前可用的会话地址。
+
+        决斗消息不能只依赖匹配时保存的 unified_msg_origin：QQ/适配器重连、群会话
+        首次建立顺序变化时都可能导致旧 origin 失效。这里同时尝试当前群记录、战斗
+        记录和事件传入的当前 origin，并去重。
+        """
+        if not b:
+            return []
+        uid = str(recipient_user_id)
+        side = "p1" if str(b["p1_user_id"]) == uid else "p2"
+        group_id = str(preferred_group_id or b[side + "_group_id"] or "")
+        origins=[]
+        if group_id:
+            try:
+                group=self.db.get_group(group_id)
+                current=str(group["session_origin"] or "") if group else ""
+                if current: origins.append(current)
+            except Exception:
+                pass
+        stored=str(b[side + "_origin"] or "")
+        if stored: origins.append(stored)
+        out=[]
+        seen=set()
+        for x in origins:
+            x=str(x).strip()
+            if x and x not in seen:
+                seen.add(x); out.append(x)
+        return out
+
+    async def _deliver_duel_notification(self, b, recipient_user_id: str, message: str, *, preferred_group_id: str = "", dedupe_key: str = "") -> bool:
+        """先入站队列，再即时投递；即时失败由调度器和收件人下次发言兜底。"""
+        if not b or not recipient_user_id:
+            return False
+        recipient=str(recipient_user_id)
+        group_id=str(preferred_group_id or (b["p1_group_id"] if str(b["p1_user_id"])==recipient else b["p2_group_id"]))
+        key=dedupe_key or f"notice:{b['id']}:{recipient}:{hash(message)}"
+        self.db.enqueue_duel_notification(int(b["id"]), recipient, group_id, message, recipient, key)
+        for origin in self._duel_candidate_origins(b, recipient, group_id):
+            if await self._broadcast(origin, message, proactive=False, mention_user_id=recipient):
+                # Queue remains until marked, so restart/retry is safe.
+                pending=self.db.fetchone("SELECT id FROM duel_notifications WHERE dedupe_key=? LIMIT 1", (key,))
+                if pending:
+                    self.db.mark_duel_notification_delivered(int(pending["id"]))
+                return True
+        return False
+
+    def _duel_target_origin(self, b, recipient_user_id: str) -> str:
+        """Resolve the opponent's current group session instead of trusting a stale battle origin."""
+        if not b:
+            return ""
+        recipient_user_id = str(recipient_user_id)
+        side = "p1" if str(b["p1_user_id"]) == recipient_user_id else "p2"
+        group_id = str(b[side + "_group_id"] or "")
+        if group_id:
+            try:
+                group = self.db.get_group(group_id)
+                current = str(group["session_origin"] or "") if group else ""
+                if current:
+                    return current
+            except Exception:
+                pass
+        return str(b[side + "_origin"] or "")
+
+    def _refresh_duel_actor_origin(self, b, user_id: str, group_id: str | None, origin: str):
+        if not b or not origin:
+            return b
+        uid = str(user_id)
+        fields = {}
+        if str(b["p1_user_id"]) == uid:
+            fields["p1_origin"] = str(origin); fields["p1_group_id"] = str(group_id or b["p1_group_id"] or "")
+        elif str(b["p2_user_id"]) == uid:
+            fields["p2_origin"] = str(origin); fields["p2_group_id"] = str(group_id or b["p2_group_id"] or "")
+        if fields:
+            try:
+                self.db.update_duel(int(b["id"]), **fields)
+                return self.db.get_duel(int(b["id"])) or b
+            except Exception:
+                return b
+        return b
+
+    def _duel_origin_pair(self, b, user_id):
+        if not b:
+            return "", "", ""
+        me = "p1" if str(b["p1_user_id"]) == str(user_id) else "p2"
+        op = "p2" if me == "p1" else "p1"
+        target_user = str(b[op+"_user_id"] or "")
+        return self._duel_target_origin(b, target_user), target_user, str(b[op+"_name"] or "对手")
+
+    def _duel_notice_for_user(self, b, user_id: str, actor_user_id: str, text: str) -> str:
+        """将一次决斗行动转换成收件人视角，并明确告诉下一位行动者该做什么。"""
+        if not b:
+            return text
+        user_id = str(user_id)
+        actor_user_id = str(actor_user_id)
+        if str(b["state"]) == "finished":
+            return self._duel_result_for_user(b, user_id, text)
+        me = "p1" if b["p1_user_id"] == user_id else "p2"
+        op = "p2" if me == "p1" else "p1"
+        lines = [f"🔔【决斗 #{b['id']}】对手【{b[op+'_name']}】刚刚行动。", text, "", f"你的生命：❤️ {b[me+'_hp']}/{b[me+'_max_hp']} · ⚡ {b[me+'_stamina']}/100", f"对手生命：❤️ {b[op+'_hp']}/{b[op+'_max_hp']}"]
+        if str(b["turn_user_id"] or "") == user_id:
+            lines += ["", "👉 现在轮到你行动。", self.engine._duel_action_help(user_id)]
+        else:
+            lines += ["", f"⏳ 现在等待【{b[b['turn_user_id']+'_name']}】行动。"]
+        return "\n".join(lines)
+
+    def _duel_mention_text(self, user_id: str, text: str):
+        return self._mention_chain(str(user_id), text)
+
+    def _duel_pair_side(self, b, user_id: str):
+        me = "p1" if b["p1_user_id"] == str(user_id) else "p2"
+        return me, ("p2" if me == "p1" else "p1")
+
+    def _duel_result_for_user(self, b, user_id, text):
+        """把决斗结果转成当前玩家视角，避免胜者文案被原样转给败者。"""
+        if not b:
+            return text
+        if str(b.get("state") if hasattr(b, "get") else b["state"]) != "finished":
+            return text
+        winner = str(b["winner_user_id"] or "")
+        loser = str(b["loser_user_id"] or "")
+        detail = text.split("\n", 1)[1] if "\n" in text else text
+        if str(user_id) == winner:
+            return "🏆【决斗结束】你获胜！\n" + detail
+        if str(user_id) == loser:
+            death_detail = ""
+            try:
+                raw_result = b["result_json"] or "{}"
+                payload = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+                death_detail = str(payload.get("loser_death_text") or "").strip()
+            except Exception:
+                death_detail = ""
+            return "💀【决斗结束】你已落败。\n" + detail + (("\n" + death_detail) if death_detail and death_detail not in detail else "")
+        return text
+
+    def _name_from_battle(self, b, user_id: str) -> str:
+        return str(b["p1_name"] if str(b["p1_user_id"]) == str(user_id) else b["p2_name"])
+
     @filter.command("决斗", alias={"跨群决斗","pvp"})
     async def duel(self,event:AstrMessageEvent):
         blocked=self._disabled_or_private(event)
@@ -847,53 +1520,107 @@ class Main(Star):
             self.db.clear_duel_queue_user(u); yield event.plain_result("🛑 已退出决斗匹配队列。"); return
         if action in {"匹配","开始","join"}:
             origin=getattr(event,"unified_msg_origin","") or (self.db.get_group(g)["session_origin"] if g and self.db.get_group(g) else "")
+            if g and origin:
+                self.db.upsert_group(g, origin)
             async with self._duel_lock:
                 text=self.engine.duel_join(g,u,n,origin)
                 b=self.db.get_active_duel_for_user(u)
-            yield event.plain_result(text)
             if b:
-                other=b["p2_origin"] if b["p1_user_id"]==u else b["p1_origin"]
-                other_name=b["p2_name"] if b["p1_user_id"]==u else b["p1_name"]
-                if other and other!=origin:
-                    await self._broadcast(other,f"⚔️【跨群决斗 #{b['id']}】你已匹配到 {n}！现在开始战斗。输入 `/决斗状态` 查看，轮到你时输入 `/决斗攻击`。",proactive=False)
+                opponent_id = str(b["p2_user_id"] if b["p1_user_id"]==u else b["p1_user_id"])
+                opponent_name = str(b["p2_name"] if b["p1_user_id"]==u else b["p1_name"])
+                first = str(b["p1_name"] if b["turn_user_id"]==b["p1_user_id"] else b["p2_name"])
+                own = f"⚔️【跨群决斗 #{b['id']}】匹配成功！\n你已匹配到【{opponent_name}】。\n\n🔥 {first} 先手。\n{self.engine._duel_action_help(u) if str(b['turn_user_id'])==u else '⏳ 等待对手行动。'}"
+                # 跨群主动通知必须在 yield 当前事件回复之前执行；兼容只消费首个 yield 的调度器。
+                other_uid = str(b['p2_user_id'] if b['p1_user_id']==u else b['p1_user_id'])
+                if other_uid:
+                    other_group = str(b['p2_group_id'] if str(b['p2_user_id'])==other_uid else b['p1_group_id'])
+                    other_text = f"⚔️【跨群决斗 #{b['id']}】匹配成功！\n你已匹配到【{self._name_from_battle(b, other_uid)}】。\n\n🔥 {first} 先手。\n{self.engine._duel_action_help(other_uid) if str(b['turn_user_id'])==other_uid else '⏳ 等待对手行动。'}"
+                    await self._deliver_duel_notification(b, other_uid, other_text, preferred_group_id=other_group, dedupe_key=f"match:{b['id']}:{other_uid}")
+                yield event.chain_result(self._mention_chain(u, own))
+                return
+            yield event.plain_result(text)
             return
-        yield event.plain_result("用法：/决斗 匹配｜/决斗 状态｜/决斗 取消")
+        # Shortcuts: /决斗 攻击 /决斗 防御 /决斗 技能 [技能名]
+        if action in {"攻击","attack"}:
+            action="攻击"
+        elif action in {"防御","guard"}:
+            action="防御"
+        elif action in {"技能","skill"}:
+            action="技能"
+        else:
+            yield event.plain_result("用法：/决斗 匹配｜/决斗 状态｜/决斗 取消｜/决斗 攻击｜/决斗 技能 [技能名]｜/决斗 防御")
+            return
+        async with self._duel_lock:
+            skill=args[1] if action=="技能" and len(args)>1 else ""
+            kind={"攻击":"attack","技能":"skill","防御":"guard"}[action]
+            text,b=self.engine.duel_action(u,kind,skill)
+            if b:
+                b=self._refresh_duel_actor_origin(b,u,g,getattr(event,"unified_msg_origin","") or "")
+        personal=self._duel_result_for_user(b,u,text)
+        if b:
+            other_uid = str(b["p2_user_id"] if str(b["p1_user_id"])==u else b["p1_user_id"])
+            if other_uid:
+                other_text=self._duel_notice_for_user(b,other_uid,u,text)
+                target_group=str(b["p1_group_id"] if str(b["p1_user_id"])==other_uid else b["p2_group_id"])
+                await self._deliver_duel_notification(b, other_uid, other_text, preferred_group_id=target_group, dedupe_key=f"action:{b['id']}:{other_uid}:round:{b['round_no']}:turn:{b['turn_user_id']}")
+        yield event.chain_result(self._mention_chain(u, personal))
 
     @filter.command("决斗攻击", alias={"pvp攻击"})
     async def duel_attack(self,event:AstrMessageEvent):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
-        text,b=self.engine.duel_action(self._user(event),"attack")
-        yield event.plain_result(text)
+        u=self._user(event); g=self._group(event)
+        origin=getattr(event,"unified_msg_origin","") or ""
+        if g and origin:self.db.upsert_group(g, origin)
+        async with self._duel_lock:
+            text,b=self.engine.duel_action(u,"attack")
+            if b:b=self._refresh_duel_actor_origin(b,u,g,origin)
+        personal=self._duel_result_for_user(b,u,text)
         if b:
-            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
-            origin=getattr(event,"unified_msg_origin","")
-            if other and other!=origin:
-                await self._broadcast(other,text,proactive=False)
+            other_uid = str(b["p2_user_id"] if str(b["p1_user_id"])==u else b["p1_user_id"])
+            if other_uid:
+                other_text=self._duel_notice_for_user(b,other_uid,u,text)
+                target_group=str(b["p1_group_id"] if str(b["p1_user_id"])==other_uid else b["p2_group_id"])
+                await self._deliver_duel_notification(b, other_uid, other_text, preferred_group_id=target_group, dedupe_key=f"action:{b['id']}:{other_uid}:round:{b['round_no']}:turn:{b['turn_user_id']}")
+        yield event.chain_result(self._mention_chain(u, personal))
 
     @filter.command("决斗技能", alias={"pvp技能"})
     async def duel_skill(self,event:AstrMessageEvent):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
-        args=self._args(event)
-        if not args: yield event.plain_result("用法：/决斗技能 技能名"); return
-        text,b=self.engine.duel_action(self._user(event),"skill",args[0]); yield event.plain_result(text)
+        args=self._args(event); u=self._user(event); g=self._group(event); skill=args[0] if args else ""
+        origin=getattr(event,"unified_msg_origin","") or ""
+        if g and origin:self.db.upsert_group(g, origin)
+        async with self._duel_lock:
+            text,b=self.engine.duel_action(u,"skill",skill)
+            if b:b=self._refresh_duel_actor_origin(b,u,g,origin)
+        personal=self._duel_result_for_user(b,u,text)
         if b:
-            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
-            origin=getattr(event,"unified_msg_origin","")
-            if other and other!=origin:
-                await self._broadcast(other,text,proactive=False)
+            other_uid = str(b["p2_user_id"] if str(b["p1_user_id"])==u else b["p1_user_id"])
+            if other_uid:
+                other_text=self._duel_notice_for_user(b,other_uid,u,text)
+                target_group=str(b["p1_group_id"] if str(b["p1_user_id"])==other_uid else b["p2_group_id"])
+                await self._deliver_duel_notification(b, other_uid, other_text, preferred_group_id=target_group, dedupe_key=f"action:{b['id']}:{other_uid}:round:{b['round_no']}:turn:{b['turn_user_id']}")
+        yield event.chain_result(self._mention_chain(u, personal))
 
     @filter.command("决斗防御", alias={"pvp防御"})
     async def duel_guard(self,event:AstrMessageEvent):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
-        text,b=self.engine.duel_action(self._user(event),"guard"); yield event.plain_result(text)
+        u=self._user(event); g=self._group(event)
+        origin=getattr(event,"unified_msg_origin","") or ""
+        if g and origin:self.db.upsert_group(g, origin)
+        async with self._duel_lock:
+            text,b=self.engine.duel_action(u,"guard")
+            if b:b=self._refresh_duel_actor_origin(b,u,g,origin)
+        personal=self._duel_result_for_user(b,u,text)
         if b:
-            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
-            origin=getattr(event,"unified_msg_origin","")
-            if other and other!=origin:
-                await self._broadcast(other,text,proactive=False)
+            other_uid = str(b["p2_user_id"] if str(b["p1_user_id"])==u else b["p1_user_id"])
+            if other_uid:
+                other_text=self._duel_notice_for_user(b,other_uid,u,text)
+                target_group=str(b["p1_group_id"] if str(b["p1_user_id"])==other_uid else b["p2_group_id"])
+                await self._deliver_duel_notification(b, other_uid, other_text, preferred_group_id=target_group, dedupe_key=f"action:{b['id']}:{other_uid}:round:{b['round_no']}:turn:{b['turn_user_id']}")
+        yield event.chain_result(self._mention_chain(u, personal))
 
     @filter.command("战后留言", alias={"决斗留言"})
     async def duel_message(self,event:AstrMessageEvent):
@@ -901,14 +1628,14 @@ class Main(Star):
         if blocked: yield event.plain_result(blocked); return
         args=self._args(event)
         if not args: yield event.plain_result("用法：/战后留言 内容"); return
-        text,b,msg_id=self.engine.duel_message(self._user(event)," ".join(args)); yield event.plain_result(text)
+        text,b,msg_id=self.engine.duel_message(self._user(event)," ".join(args))
         if b:
-            other=b["p2_origin"] if b["p1_user_id"]==self._user(event) else b["p1_origin"]
+            other=self._duel_target_origin(b, b["p2_user_id"] if b["p1_user_id"]==self._user(event) else b["p1_user_id"])
             sender=b["p1_name"] if b["p1_user_id"]==self._user(event) else b["p2_name"]
-            origin=getattr(event,"unified_msg_origin","")
-            delivered=False if not other or other==origin else await self._broadcast(other,f"💬【决斗战后留言】{sender}：{' '.join(args)}",proactive=False)
+            delivered=False if not other else await self._broadcast(other,f"💬【决斗战后留言】{sender}：{' '.join(args)}",proactive=False)
             if delivered and msg_id:
                 self.db.mark_duel_messages_delivered(self._user(event),[int(msg_id)])
+        yield event.plain_result(text)
 
     @filter.command("复活状态", alias={"死亡状态","复活"})
     async def revive_status(self,event:AstrMessageEvent):
@@ -1047,9 +1774,45 @@ class Main(Star):
         lines = ["⚔️ 【装备栏】"]
         for row in equip:
             flag = " ⭐已装备" if row["equipped"] else ""
-            lines.append(f"#{row['id']} {row['name']} [{row['rarity']}] Lv.{row['level']}｜⚔️{row['attack']} 🛡️{row['defense']} {flag}")
-        lines.append("\n穿戴：/穿戴 装备ID")
+            revive = f"｜🕊️死亡触发{row['revive_chance']}%" if int(row['revive_chance'] or 0) else ""
+            lines.append(f"#{row['id']} {row['name']} [{row['rarity']}] Lv.{row['level']}｜部位:{row['slot']}｜⚔️{row['attack']} 🛡️{row['defense']} 🗺️+{row['explore_bonus']}%{revive}{flag}")
+        lines.append("\n穿戴：/穿戴 装备ID｜强化：/强化 装备ID｜拆解：/拆解 装备ID｜配方：/合成列表")
         yield event.plain_result("\n".join(lines))
+
+    @filter.command("合成列表", alias={"装备合成", "合成配方"})
+    async def crafting_list(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        yield event.plain_result(self.engine.crafting_text(self._group(event),self._user(event),self._name(event)))
+
+    @filter.command("合成", alias={"制作", "craft"})
+    async def craft_equipment(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        if not args:
+            yield event.plain_result("用法：/合成 装备ID [数量]\n先输入 `/合成列表` 查看材料需求。"); return
+        try:qty=int(args[1]) if len(args)>1 else 1
+        except ValueError:qty=1
+        yield event.plain_result(self.engine.craft_equipment(self._group(event),self._user(event),self._name(event),args[0],qty).text)
+
+    @filter.command("自动合成", alias={"自动制作", "autocraft"})
+    async def auto_craft_equipment(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        try:qty=int(args[0]) if args else 1
+        except ValueError:qty=1
+        yield event.plain_result(self.engine.auto_craft_equipment(self._group(event),self._user(event),self._name(event),qty).text)
+
+    @filter.command("拆解", alias={"分解装备"})
+    async def disassemble_equipment(self, event: AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        args=self._args(event)
+        if not args or not args[0].isdigit():
+            yield event.plain_result("用法：/拆解 装备ID\n只能拆解未穿戴装备。"); return
+        yield event.plain_result(self.engine.disassemble_equipment(self._group(event),self._user(event),int(args[0]),self._name(event)).text)
 
     @filter.command("穿戴")
     async def equip(self, event: AstrMessageEvent):
@@ -1548,6 +2311,14 @@ class Main(Star):
         admins = self._web_admin_usernames()
         if username and username in admins:
             return True
+        # Password-login sessions are also recognized by bridge.upload(), which has
+        # no place to carry our custom token in multipart form data.
+        session_key = self._web_session_key()
+        expires = self._web_write_sessions.get(session_key, 0)
+        if expires > int(time.time()):
+            return True
+        if session_key in self._web_write_sessions:
+            self._web_write_sessions.pop(session_key, None)
         token = token or self._web_token()
         if token and token in self._web_tokens:
             owner, expires = self._web_tokens[token]
@@ -1556,10 +2327,27 @@ class Main(Star):
             self._web_tokens.pop(token, None)
         return False
 
+    def _web_session_key(self) -> str:
+        try:
+            username = str(request.username or "").strip() if request else ""
+            if username:
+                return f"user:{username}"
+            host = str(request.client_host or "unknown") if request else "unknown"
+            return f"host:{host}"
+        except Exception:
+            return "unknown"
+
     def _issue_web_token(self) -> str:
         # Short-lived in-memory token; it never lands in SQLite/config.
         token = secrets.token_urlsafe(32)
-        self._web_tokens[token] = (self._web_username() or "password-login", int(time.time()) + 6 * 3600)
+        owner = self._web_username() or self._web_session_key()
+        expires = int(time.time()) + 6 * 3600
+        self._web_tokens[token] = (owner, expires)
+        # bridge.upload() intentionally only carries the file, not arbitrary JSON/query
+        # values. Record the successful password-login session so multipart uploads
+        # from the same Dashboard session can be authorized without weakening the
+        # normal plugin-page access checks.
+        self._web_write_sessions[self._web_session_key()] = expires
         return token
 
     def _web_action_allowed_once(self, group_id: str, action: str, window_seconds: int = 4) -> bool:
@@ -1590,7 +2378,7 @@ class Main(Star):
         return json_response({
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
-            "version": "1.9.0",
+            "version": "1.11.29",
             "username": username,
             "authenticated": authed,
             "password_configured": password_configured,
@@ -1699,6 +2487,407 @@ class Main(Star):
             counts[key] = counts.get(key, 0) + 1
         return json_response({"tutorials": [dict(r) for r in rows], "counts": counts})
 
+    async def page_system(self):
+        """System operations aggregate endpoint.
+
+        Older AstrBot builds / plugin-page bridges occasionally report a missing
+        route when several sibling APIs are requested during the first render.
+        This endpoint intentionally returns the complete system view in one
+        response, while the legacy sibling routes remain available below.
+        """
+        denied = self._require_web(False)
+        if denied: return denied
+        metrics = self._system_metrics()
+        groups_by_id = {str(r["group_id"]): dict(r) for r in self.db.get_group_details(500)}
+        broadcast_rows = {str(r["group_id"]): dict(r) for r in self.db.get_group_broadcasts(500)}
+        default_message = str(self.config.get("group_broadcast_default_message", "📢 群聊世界活动提醒：输入 /群聊世界状态 查看世界状态。") or "")
+        default_interval = int(self.config.get("group_broadcast_default_interval_minutes", 120) or 120)
+        broadcasts = []
+        for gid, g in groups_by_id.items():
+            row = broadcast_rows.get(gid, {})
+            broadcasts.append({
+                "group_id": gid, "session_origin": str(g.get("session_origin") or ""),
+                "enabled": bool(row.get("enabled", 0)),
+                "message": str(row.get("message") or default_message),
+                "interval_minutes": int(row.get("interval_minutes") or default_interval),
+                "next_send_at": int(row.get("next_send_at") or 0),
+                "last_sent_at": int(row.get("last_sent_at") or 0),
+                "total_sent": int(row.get("total_sent") or 0),
+                "world_enabled": bool(g.get("enabled", 0)),
+                "player_count": int(g.get("player_count") or 0),
+            })
+        campaigns=[]
+        for row in self.db.get_broadcast_campaigns(100):
+            item=dict(row); item["enabled"]=bool(item.get("enabled"))
+            item["targets"]=[dict(x) for x in self.db.get_broadcast_campaign_targets(int(row["id"]))]
+            campaigns.append(item)
+        return json_response({
+            "ok": True,
+            "route": "system/overview",
+            "metrics": metrics,
+            "groups": broadcasts,
+            "config": {
+                "maintenance_auto_cleanup": bool(self.config.get("maintenance_auto_cleanup", True)),
+                "maintenance_cleanup_time": str(self.config.get("maintenance_cleanup_time", "04:30") or "04:30"),
+                "maintenance_cache_retention_days": int(self.config.get("maintenance_cache_retention_days", 7) or 7),
+                "group_broadcast_default_message": default_message,
+                "group_broadcast_default_interval_minutes": default_interval,
+            },
+            "cleanup": {"auto_date": self._last_auto_cleanup_date, "cache_dir": str(self.cache_dir)},
+            "broadcasts": broadcasts,
+            "campaigns": campaigns,
+            "running": [cid for cid, task in self._broadcast_campaign_tasks.items() if task and not task.done()],
+        })
+
+    async def page_menu_status(self):
+        self._refresh_help_menu_config_from_disk()
+        denied = self._require_web(False)
+        if denied:
+            return denied
+        include_image = str(request.query.get("include_image") or "0") in {"1", "true", "yes"} if request else False
+        return json_response({"ok": True, **self._menu_status(include_image=include_image)})
+
+    async def page_menu_settings_save(self):
+        """只保存帮助菜单，不依赖高级配置总保存权限。
+
+        能够读取群聊世界后台的管理员同样可以修改这个专属菜单分区。
+        这样不会再因为总配置接口的写权限判断导致“禁止修改”。
+        """
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(False, token)
+        if denied:
+            return denied
+        changes = payload.get("changes") or {}
+        if not isinstance(changes, dict):
+            return error_response("changes 必须是对象。", status_code=400)
+        allowed = {"image_enabled", "text_enabled", "image_first"}
+        unknown = [k for k in changes if k not in allowed]
+        if unknown:
+            return error_response(f"不允许修改配置项：{unknown[0]}", status_code=400)
+        self._set_help_menu_config(**{k: bool(v) for k, v in changes.items()})
+        if not self._save_config_object(self.config):
+            return error_response("帮助菜单设置写入失败，请检查 AstrBot 配置文件权限。", status_code=500)
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "help_menu_save", None, json.dumps(changes, ensure_ascii=False))
+        return json_response({"ok": True, "message": "帮助菜单设置已保存。", **self._menu_status(False)})
+
+    @staticmethod
+    def _decode_uploaded_base64(raw: str) -> bytes:
+        """兼容 data URL、换行、URL-safe Base64 以及缺失 padding。"""
+        raw = str(raw or "").strip()
+        if raw.startswith("data:"):
+            head, sep, body = raw.partition(",")
+            if not sep or ";base64" not in head.lower():
+                raise ValueError("图片数据格式无效。")
+            raw = body
+        raw = re.sub(r"\s+", "", raw)
+        if not raw:
+            raise ValueError("图片 Base64 数据为空。")
+        # Accept both standard and URL-safe Base64.
+        raw = raw.replace("-", "+").replace("_", "/")
+        raw += "=" * ((4 - len(raw) % 4) % 4)
+        return base64.b64decode(raw, validate=True)
+
+    async def page_menu_upload(self):
+        """接受 AstrBot 原生 multipart 上传，同时兼容旧版 Base64 JSON 上传。"""
+        token = None
+        try:
+            # bridge.upload() uses multipart/form-data with field name `file`.
+            files = await request.files() if request else {}
+            upload = files.get("file") if files else None
+        except Exception:
+            upload = None
+
+        if upload is not None:
+            denied = self._require_web(True)
+            if denied:
+                return denied
+            tmp = self.data_dir / ".menu_upload.tmp"
+            try:
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+                if PluginUploadFile is not None and not isinstance(upload, PluginUploadFile):
+                    return error_response("上传文件类型无效。", status_code=400)
+                await upload.save(tmp)
+                decoded = tmp.read_bytes()
+                filename = str(getattr(upload, "filename", "menu_image") or "menu_image")
+                content_type = str(getattr(upload, "content_type", "") or "")
+            except Exception as exc:
+                logger.exception("[群聊世界] 读取菜单图片上传失败：%s", exc)
+                return error_response(f"读取上传图片失败：{exc}", status_code=400)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        else:
+            payload = await request.json(default={}) if request else {}
+            token = str(payload.get("token") or "")
+            denied = self._require_web(True, token)
+            if denied:
+                return denied
+            raw = str(payload.get("image_base64") or "").strip()
+            if not raw:
+                return error_response("请先选择菜单图片。", status_code=400)
+            try:
+                decoded = self._decode_uploaded_base64(raw)
+            except Exception as exc:
+                # Backward compatibility: tolerate harmless transport quotes/whitespace
+                # before giving a hard Base64 error.
+                cleaned = raw.strip().strip('"').strip("'").replace('\n', '')
+                try:
+                    decoded = base64.b64decode(cleaned, altchars=b"-_", validate=False)
+                except Exception:
+                    return error_response(f"图片 Base64 数据无效：{exc}", status_code=400)
+            filename = "menu_image"
+            content_type = ""
+
+        if not decoded:
+            return error_response("图片数据为空。", status_code=400)
+        if len(decoded) > 5 * 1024 * 1024:
+            return error_response("菜单图片必须小于等于 5 MB。", status_code=400)
+
+        signatures = (
+            (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
+            (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
+            (b"RIFF", "image/webp", ".webp"),
+        )
+        matched = next(((mime, suffix) for sig, mime, suffix in signatures if decoded.startswith(sig)), None)
+        if matched is None:
+            return error_response("仅支持 JPG、PNG、WEBP 菜单图片。请确认选择的是实际图片文件。", status_code=400)
+        actual, suffix = matched
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            for p in self._menu_custom_paths:
+                if p.exists():
+                    p.unlink()
+            target = self.data_dir / f"menu_image{suffix}"
+            target.write_bytes(decoded)
+            self._set_help_menu_config(image_enabled=True)
+            if not self._save_config_object(self.config):
+                return error_response("图片已保存，但 AstrBot 配置保存失败，请检查配置文件权限。", status_code=500)
+        except Exception as exc:
+            logger.exception("[群聊世界] 保存菜单图片失败：%s", exc)
+            return error_response("保存菜单图片失败，请检查插件数据目录权限。", status_code=500)
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "menu_image_upload", None, f"mime={actual};bytes={len(decoded)};name={filename}")
+        return json_response({"ok": True, "message": "菜单图片已更新并启用。", **self._menu_status(False)})
+
+    async def page_menu_reset(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied:
+            return denied
+        try:
+            for p in self._menu_custom_paths:
+                if p.exists():
+                    p.unlink()
+            self._set_help_menu_config(image_enabled=True, image_first=True, text_enabled=True)
+            if not self._save_config_object(self.config):
+                return error_response("默认菜单已恢复，但配置保存失败，请检查权限。", status_code=500)
+            self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "menu_image_reset", None, "恢复默认菜单图片")
+            return json_response({"ok": True, "message": "已恢复默认菜单图片和帮助菜单设置。", **self._menu_status(False)})
+        except Exception as exc:
+            return error_response(f"恢复默认菜单图片失败：{exc}", status_code=500)
+
+    async def page_system_cleanup(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        days = int(payload.get("retention_days", self.config.get("maintenance_cache_retention_days", 7)) or 7)
+        result = self._cleanup_cache(days)
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "cleanup_cache", None, json.dumps(result, ensure_ascii=False))
+        return json_response({"ok": True, **result, "metrics": self._system_metrics()})
+
+    async def page_broadcasts(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        default_message = str(self.config.get("group_broadcast_default_message", "") or "")
+        default_interval = int(self.config.get("group_broadcast_default_interval_minutes", 120) or 120)
+        rows = {str(r["group_id"]): dict(r) for r in self.db.get_group_broadcasts(500)}
+        groups = []
+        for g in self.db.get_group_details(500):
+            gid = str(g["group_id"])
+            row = rows.get(gid, {})
+            groups.append({
+                "group_id": gid,
+                "session_origin": str(g["session_origin"] or ""),
+                "enabled": bool(row.get("enabled", 0)),
+                "message": str(row.get("message") or default_message),
+                "interval_minutes": int(row.get("interval_minutes") or default_interval),
+                "next_send_at": int(row.get("next_send_at") or 0),
+                "last_sent_at": int(row.get("last_sent_at") or 0),
+                "total_sent": int(row.get("total_sent") or 0),
+                "world_enabled": bool(g["enabled"]),
+                "player_count": int(g["player_count"] or 0),
+            })
+        return json_response({
+            "groups": groups,
+            "default_message": default_message,
+            "default_interval_minutes": default_interval,
+        })
+
+    def _broadcast_group_ids_from_payload(self, payload: dict[str, Any]) -> list[str]:
+        raw = payload.get("group_ids")
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for value in raw[:500]:
+            gid = str(value or "").strip()
+            if gid and gid not in out:
+                out.append(gid)
+        return out
+
+    async def page_broadcast_batch_save(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        group_ids = self._broadcast_group_ids_from_payload(payload)
+        if not group_ids: return error_response("至少选择一个目标群。", status_code=400)
+        message = str(payload.get("message") or "").strip()[:3000]
+        if not message: return error_response("群发消息不能为空。", status_code=400)
+        interval = max(1, min(10080, int(payload.get("interval_minutes", self.config.get("group_broadcast_default_interval_minutes", 120)) or 120)))
+        enabled = bool(payload.get("enabled", True))
+        now = int(time.time())
+        saved, missing = [], []
+        for gid in group_ids:
+            group = self.db.get_group(gid)
+            if not group or not group["session_origin"]:
+                missing.append(gid)
+                continue
+            next_at = now + interval * 60 if enabled else 0
+            self.db.upsert_group_broadcast(gid, enabled, message, interval, next_at)
+            self.db.add_admin_log(gid, self._web_username() or "web", "broadcast_batch_save", None, f"enabled={enabled};interval={interval};message={message[:200]}")
+            saved.append(gid)
+        return json_response({"ok": True, "message": f"已保存 {len(saved)} 个群的群发配置。", "saved": saved, "missing": missing})
+
+    async def page_broadcast_batch_send_now(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        group_ids = self._broadcast_group_ids_from_payload(payload)
+        if not group_ids: return error_response("至少选择一个目标群。", status_code=400)
+        message = str(payload.get("message") or "").strip()[:3000]
+        if not message: return error_response("群发消息不能为空。", status_code=400)
+        interval = max(1, min(86400, int(payload.get("group_interval_seconds", 1) or 1)))
+        task = asyncio.create_task(self._run_broadcast_oneoff(group_ids, message, interval, self._web_username() or "web"))
+        self._broadcast_oneoff_tasks.add(task)
+        task.add_done_callback(self._broadcast_oneoff_tasks.discard)
+        return json_response({
+            "ok": True,
+            "message": f"立即群发已启动：{len(group_ids)} 个群，群间隔 {interval} 秒。",
+            "group_count": len(group_ids), "group_interval_seconds": interval,
+            "asynchronous": True,
+        })
+
+    async def page_broadcast_campaigns(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        campaigns = []
+        for row in self.db.get_broadcast_campaigns(100):
+            item = dict(row)
+            item["enabled"] = bool(item.get("enabled"))
+            item["targets"] = [dict(x) for x in self.db.get_broadcast_campaign_targets(int(row["id"]))]
+            campaigns.append(item)
+        return json_response({"campaigns": campaigns, "running": [cid for cid, task in self._broadcast_campaign_tasks.items() if task and not task.done()]})
+
+    async def page_broadcast_campaign_save(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        group_ids = self._broadcast_group_ids_from_payload(payload)
+        if not group_ids: return error_response("至少选择一个循环群发目标群。", status_code=400)
+        message = str(payload.get("message") or "").strip()[:3000]
+        if not message: return error_response("循环群发消息不能为空。", status_code=400)
+        name = str(payload.get("name") or "循环群发").strip()[:80] or "循环群发"
+        gap = max(1, min(86400, int(payload.get("group_interval_seconds", 1) or 1)))
+        loop_minutes = max(1, min(525600, int(payload.get("loop_interval_minutes", 1) or 1)))
+        campaign_id = int(payload.get("campaign_id") or 0)
+        enabled = bool(payload.get("enabled", True))
+        now = int(time.time())
+        if campaign_id:
+            ok = self.db.replace_broadcast_campaign(campaign_id, name, message, gap, loop_minutes, group_ids, enabled=enabled, next_run_at=now if enabled else 0)
+            if not ok: return error_response("循环群发任务不存在。", status_code=404)
+            old_task = self._broadcast_campaign_tasks.pop(campaign_id, None)
+            if old_task and not old_task.done():
+                old_task.cancel()
+                try:
+                    await old_task
+                except asyncio.CancelledError:
+                    pass
+        else:
+            campaign_id = self.db.create_broadcast_campaign(name, message, gap, loop_minutes, group_ids, next_run_at=now if enabled else 0)
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "broadcast_campaign_save", campaign_id, f"groups={','.join(group_ids)};gap={gap};loop={loop_minutes};enabled={enabled}")
+        return json_response({"ok": True, "campaign_id": campaign_id, "message": "循环群发任务已保存，并将立即开始第一轮。" if enabled else "循环群发任务已保存但未启动。"})
+
+    async def page_broadcast_campaign_toggle(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        cid = int(payload.get("campaign_id") or 0)
+        enabled = bool(payload.get("enabled"))
+        if cid <= 0: return error_response("campaign_id 无效。", status_code=400)
+        next_at = int(time.time()) if enabled else 0
+        if not self.db.set_broadcast_campaign_enabled(cid, enabled, next_at): return error_response("循环群发任务不存在。", status_code=404)
+        if not enabled:
+            task = self._broadcast_campaign_tasks.pop(cid, None)
+            if task and not task.done(): task.cancel()
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "broadcast_campaign_toggle", cid, f"enabled={enabled}")
+        return json_response({"ok": True, "message": "循环群发已启动。" if enabled else "循环群发已停止。"})
+
+    async def page_broadcast_campaign_delete(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        cid = int(payload.get("campaign_id") or 0)
+        if cid <= 0: return error_response("campaign_id 无效。", status_code=400)
+        task = self._broadcast_campaign_tasks.pop(cid, None)
+        if task and not task.done(): task.cancel()
+        if not self.db.delete_broadcast_campaign(cid): return error_response("循环群发任务不存在。", status_code=404)
+        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "broadcast_campaign_delete", cid, "")
+        return json_response({"ok": True, "message": "循环群发任务已删除。"})
+
+    async def page_broadcast_save(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        gid = str(payload.get("group_id") or "").strip()
+        if not gid: return error_response("group_id required", status_code=400)
+        group = self.db.get_group(gid)
+        if not group: return error_response("群组不存在，请先让该群发送一次消息让插件记录。", status_code=404)
+        message = str(payload.get("message") if payload.get("message") is not None else self.config.get("group_broadcast_default_message", ""))[:3000]
+        enabled = bool(payload.get("enabled", False))
+        interval = max(1, min(10080, int(payload.get("interval_minutes", self.config.get("group_broadcast_default_interval_minutes", 120)) or 120)))
+        next_at = int(time.time()) + interval * 60 if enabled else 0
+        self.db.upsert_group_broadcast(gid, enabled, message, interval, next_at)
+        self.db.add_admin_log(gid, self._web_username() or "web", "broadcast_save", None, f"enabled={enabled};interval={interval}")
+        return json_response({"ok": True, "message": "群发配置已保存。"})
+
+    async def page_broadcast_send_now(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        gid = str(payload.get("group_id") or "").strip()
+        group = self.db.get_group(gid)
+        if not group or not group["session_origin"]: return error_response("找不到群组会话来源。", status_code=404)
+        row = self.db.get_group_broadcast(gid)
+        raw_message = payload.get("message") if payload.get("message") is not None else (row["message"] if row else self.config.get("group_broadcast_default_message", ""))
+        message = str(raw_message or "").strip()[:3000]
+        if not message: return error_response("群发消息不能为空。", status_code=400)
+        ok = await self._broadcast(str(group["session_origin"]), message, proactive=False)
+        if not ok: return error_response("消息发送失败，请检查该群当前是否可发送消息。", status_code=502)
+        interval = max(1, int(row["interval_minutes"] or 120)) if row else int(self.config.get("group_broadcast_default_interval_minutes", 120) or 120)
+        self.db.mark_group_broadcast_sent(gid, int(time.time()) + interval * 60) if row else None
+        self.db.add_admin_log(gid, self._web_username() or "web", "broadcast_send_now", None, message[:500])
+        return json_response({"ok": True, "message": "已立即发送群发消息。"})
+
     async def page_settings(self):
         denied = self._require_web(False)
         if denied: return denied
@@ -1730,6 +2919,8 @@ class Main(Star):
                 return error_response(f"{key} 必须是字符串", status_code=400)
             if typ == "list" and not isinstance(value, list):
                 return error_response(f"{key} 必须是数组", status_code=400)
+            if typ == "object" and not isinstance(value, dict):
+                return error_response(f"{key} 必须是对象", status_code=400)
             if key == "cloud_selected_package_nos":
                 if len(value) > 50 or any(not isinstance(x, str) or not x.strip() or len(x) > 64 for x in value):
                     return error_response("cloud_selected_package_nos 最多 50 个，每个编号最长 64 字符", status_code=400)
@@ -1746,6 +2937,22 @@ class Main(Star):
             if self._schema[key].get("secret") and value == "********":
                 continue
             self.config[key] = value
+        menu_changes = {}
+        if "help_menu_image_enabled" in changes:
+            menu_changes["image_enabled"] = bool(changes["help_menu_image_enabled"])
+        if "help_menu_image_first" in changes:
+            menu_changes["image_first"] = bool(changes["help_menu_image_first"])
+        if "help_menu_text_enabled" in changes:
+            menu_changes["text_enabled"] = bool(changes["help_menu_text_enabled"])
+        if "help_menu_settings" in changes and isinstance(changes["help_menu_settings"], dict):
+            section = changes["help_menu_settings"]
+            menu_changes.update({
+                "image_enabled": bool(section.get("image_enabled", True)),
+                "text_enabled": bool(section.get("text_enabled", True)),
+                "image_first": bool(section.get("image_first", True)),
+            })
+        if menu_changes:
+            self._set_help_menu_config(**menu_changes)
         try:
             save = getattr(self.config, "save_config", None)
             if callable(save):
@@ -1941,7 +3148,7 @@ class Main(Star):
             "boss_damage": "boss_damage", "admin_logs": "admin_logs", "message_stats": "message_stats",
             "group_members": "group_members", "invite_codes": "invite_codes", "invite_records": "invite_records",
             "auto_battles": "auto_battles", "world_event_logs": "world_event_logs",
-            "monster_encounters": "monster_encounters", "player_skills": "player_skills",
+            "monster_encounters": "monster_encounters", "group_broadcasts": "group_broadcasts", "player_skills": "player_skills",
             "skill_cooldowns": "skill_cooldowns", "npc_interactions": "npc_interactions", "action_logs": "action_logs",
         }
         snapshot: dict[str, Any] = {
@@ -1958,7 +3165,7 @@ class Main(Star):
             if label == "groups":
                 rows = self.db.get_group_details(500) if not group_id else [self.db.get_group(group_id)]
                 rows = [r for r in rows if r]
-            elif group_id and table in {"world_event_logs", "admin_logs", "message_stats", "group_members", "monster_encounters", "npc_interactions", "action_logs", "boss_damage", "game_sessions", "auto_battles"}:
+            elif group_id and table in {"world_event_logs", "admin_logs", "message_stats", "group_members", "monster_encounters", "npc_interactions", "action_logs", "boss_damage", "game_sessions", "auto_battles", "group_broadcasts"}:
                 rows = self.db.fetchall(f"SELECT * FROM {table} WHERE group_id=? ORDER BY 1 DESC LIMIT 5000", (group_id,))
             elif table in {"players", "inventory", "pets", "equipment", "transactions", "daily_tasks", "achievements", "cooldowns", "player_skills", "skill_cooldowns", "invite_codes", "invite_records"}:
                 # Player-owned tables are global in current versions.
@@ -2050,7 +3257,7 @@ class Main(Star):
         allowed_tables = {
             "groups","players","inventory","pets","equipment","transactions","daily_tasks","achievements","cooldowns",
             "game_sessions","boss_damage","admin_logs","message_stats","group_members","invite_codes","invite_records",
-            "auto_battles","world_event_logs","monster_encounters","player_skills","skill_cooldowns","npc_interactions","action_logs",
+            "auto_battles","world_event_logs","monster_encounters","group_broadcasts","player_skills","skill_cooldowns","npc_interactions","action_logs",
         }
         selected = [(t, rows) for t, rows in tables.items() if t in allowed_tables and isinstance(rows, list)]
         import_config = bool(payload.get("import_config", True))
@@ -2149,6 +3356,7 @@ class Main(Star):
                 "tutorials": len(data.get("tutorials", {}) if isinstance(data.get("tutorials"), dict) else {}),
                 "monsters": len(data.get("monsters", []) if isinstance(data.get("monsters"), list) else []),
                 "npcs": len(data.get("npcs", []) if isinstance(data.get("npcs"), list) else []),
+                "crafting_recipes": len(data.get("crafting_recipes", {}) if isinstance(data.get("crafting_recipes"), dict) else {}),
                 "community_packages": len(data.get("community_packages", []) if isinstance(data.get("community_packages"), list) else []),
             },
             "active_merge_counts": self._cloud_active_merge_counts(),
@@ -2220,7 +3428,7 @@ class Main(Star):
         denied = self._require_web(True, token)
         if denied: return denied
         data = await self._cloud_sync_if_due(force=True)
-        return json_response({"ok": True, "message": "云端同步完成。", "data": data, "selected_package_nos": self._cloud_selected_package_nos(), "counts": {k: len(data.get(k, [] if k != "tutorials" else {})) for k in ("bosses","products","tutorials","monsters","npcs")}})
+        return json_response({"ok": True, "message": "云端同步完成。", "data": data, "selected_package_nos": self._cloud_selected_package_nos(), "counts": {k: len(data.get(k, [] if k not in ("tutorials","crafting_recipes") else {})) for k in ("bosses","products","tutorials","monsters","npcs","crafting_recipes")}})
 
     async def page_cloud_package_preview(self):
         payload = await request.json(default={}) if request else {}
@@ -2331,6 +3539,23 @@ class Main(Star):
             ("logs", self.page_logs, ["GET"], "群聊世界操作日志"),
             ("settings", self.page_settings, ["GET"], "群聊世界配置"),
             ("settings/save", self.page_save_settings, ["POST"], "群聊世界保存配置"),
+            ("system", self.page_system, ["GET"], "群聊世界系统运维"),
+            ("system/overview", self.page_system, ["GET"], "群聊世界系统运维聚合接口"),
+            ("ops", self.page_system, ["GET"], "群聊世界系统运维兼容接口"),
+            ("system/cleanup", self.page_system_cleanup, ["POST"], "群聊世界手动清理缓存"),
+            ("menu/status", self.page_menu_status, ["GET"], "群聊世界帮助菜单图片状态"),
+            ("menu/settings/save", self.page_menu_settings_save, ["POST"], "群聊世界保存帮助菜单设置"),
+            ("menu/upload", self.page_menu_upload, ["POST"], "群聊世界上传帮助菜单图片"),
+            ("menu/reset", self.page_menu_reset, ["POST"], "群聊世界恢复默认帮助菜单图片"),
+            ("broadcasts", self.page_broadcasts, ["GET"], "群聊世界群发配置"),
+            ("broadcast/campaigns", self.page_broadcast_campaigns, ["GET"], "群聊世界循环群发任务"),
+            ("broadcast/campaign/save", self.page_broadcast_campaign_save, ["POST"], "群聊世界保存循环群发任务"),
+            ("broadcast/campaign/toggle", self.page_broadcast_campaign_toggle, ["POST"], "群聊世界启停循环群发任务"),
+            ("broadcast/campaign/delete", self.page_broadcast_campaign_delete, ["POST"], "群聊世界删除循环群发任务"),
+            ("broadcast/save", self.page_broadcast_save, ["POST"], "群聊世界保存群发配置"),
+            ("broadcast/batch_save", self.page_broadcast_batch_save, ["POST"], "群聊世界批量保存群发"),
+            ("broadcast/send_now", self.page_broadcast_send_now, ["POST"], "群聊世界立即群发"),
+            ("broadcast/batch_send_now", self.page_broadcast_batch_send_now, ["POST"], "群聊世界批量立即群发"),
             ("group/action", self.page_group_action, ["POST"], "群聊世界群操作"),
             ("player/action", self.page_player_action, ["POST"], "群聊世界玩家操作"),
             ("data/export", self.page_data_export, ["GET"], "群聊世界数据导出"),
@@ -2355,6 +3580,13 @@ class Main(Star):
 
     async def terminate(self):
         self._closed = True
+        for task in list(self._broadcast_campaign_tasks.values()) + list(self._broadcast_oneoff_tasks):
+            if task and not task.done():
+                task.cancel()
+        if self._broadcast_campaign_tasks or self._broadcast_oneoff_tasks:
+            await asyncio.gather(*[t for t in list(self._broadcast_campaign_tasks.values()) + list(self._broadcast_oneoff_tasks) if t and not t.done()], return_exceptions=True)
+        self._broadcast_campaign_tasks.clear()
+        self._broadcast_oneoff_tasks.clear()
         if self._task:
             self._task.cancel()
             try:

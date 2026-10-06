@@ -1,2 +1,2 @@
-# 群聊世界云端客户端依赖。AstrBot 官方建议网络请求使用 httpx/aiohttp，而不是 requests。
+# 群聊世界依赖。psutil 不再单独声明，直接使用 AstrBot Core 已提供的 psutil；缺失时插件会自动使用系统 / resource 兜底。
 httpx>=0.27,<1

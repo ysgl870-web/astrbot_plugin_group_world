@@ -150,6 +150,47 @@ class CloudClient:
     async def sync(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
         data = await asyncio.to_thread(self._request, "plugin_sync", options or {})
         payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        # 云端官方认证的数据包统一增加“官方”展示标识；只改变展示元数据，
+        # 不改变 payload 内部 ID，避免覆盖/合并逻辑受到影响。
+        for key in ("community_packages", "selected_packages"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                for pkg in rows:
+                    if not isinstance(pkg, dict):
+                        continue
+                    badges = list(pkg.get("badges") or []) if isinstance(pkg.get("badges"), list) else []
+                    if pkg.get("official") and "官方" not in badges:
+                        badges.insert(0, "官方")
+                    if pkg.get("quality") and "优质" not in badges:
+                        badges.append("优质")
+                    pkg["badges"] = badges
+                    title = str(pkg.get("display_title") or pkg.get("title") or pkg.get("package_no") or "JSON 数据包")
+                    for label in badges:
+                        prefix = label + " · "
+                        if not title.startswith(prefix):
+                            title = prefix + title
+                    if badges:
+                        pkg["title"] = title
+                    meta = pkg.get("metadata")
+                    if isinstance(meta, dict):
+                        mt = str(meta.get("title") or title)
+                        for label in badges:
+                            prefix = label + " · "
+                            if not mt.startswith(prefix):
+                                mt = prefix + mt
+                        meta["title"] = mt
+                        meta["official"] = bool(pkg.get("official"))
+                        meta["quality"] = bool(pkg.get("quality"))
+                        meta["badges"] = badges
+                    pkg["display_title"] = str(pkg.get("title") or title)
+                    if pkg.get("official"):
+                        pkg["official_label"] = "官方"
+                    if pkg.get("quality"):
+                        pkg["quality_label"] = "优质"
+                    if pkg.get("official"):
+                        pkg["owner_label"] = "官方插件"
+                    elif pkg.get("quality"):
+                        pkg["owner_label"] = "优质插件"
         for key, default in (
             ("bosses", []),
             ("products", []),
