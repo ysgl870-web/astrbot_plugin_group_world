@@ -1,2 +1,2 @@
-# 群聊世界 V1.9.1：网络请求使用 httpx/aiohttp，推荐 httpx。
+# 群聊世界云端客户端依赖。AstrBot 官方建议网络请求使用 httpx/aiohttp，而不是 requests。
 httpx>=0.27,<1
