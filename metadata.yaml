@@ -2,11 +2,11 @@ name: astrbot_plugin_group_world
 display_name: 群聊世界
 short_desc: 把 QQ 群变成一个可长期运营的虚拟世界：签到、经济、探索、宠物、装备、小游戏、Boss、任务、成就与排行榜。
 desc: |
-  群聊世界 V1.6.2 是一套面向 AstrBot 的群聊生态插件，作者：ysgl。
+  群聊世界 V1.7.1 是一套面向 AstrBot 的群聊生态插件，作者：ysgl。
   它以群世界 + 全局玩家角色的双层 SQLite 数据模型为基础，提供玩家成长、金币/钻石经济、体力、职业、探索、随机事件、宠物、装备、商店、每日任务、成就、排行榜、小游戏、世界 Boss、管理员工具、详细数据中心与 Web 管理页；支持全局玩家跨群共享与按群世界隔离。
 author: ysgl
 repo: https://github.com/ysgl870-web/astrbot_plugin_group_world
-version: 1.6.2
+version: 1.7.1
 support_platforms:
   - qq_official
   - qq_official_webhook
