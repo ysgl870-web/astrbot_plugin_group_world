@@ -28,16 +28,19 @@ try:
     from .core.database import Database
     from .core.globaldb import GlobalPlayerDB
     from .core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WorldEngine
+    from .cloud_client import CloudClient
 except ImportError:  # AstrBot loader compatibility when main.py is imported as a standalone module
     from core.database import Database
     from core.globaldb import GlobalPlayerDB
     from core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WorldEngine
+    from cloud_client import CloudClient
 
 PLUGIN_NAME = "astrbot_plugin_group_world"
+CLOUD_DEFAULT_URL = "https://ysgl.bot.cd/astrbot"
 
 
 class Main(Star):
-    """群聊世界 V1.6.2.
+    """群聊世界 V1.9.2.
 
     The plugin deliberately relies on AstrBot's unified event/message layer.
     This keeps the game logic independent from QQ's transport while declaring
@@ -46,13 +49,16 @@ class Main(Star):
 
     def __init__(self, context: Context, config: Any):
         super().__init__(context)
-        self.config = dict(config or {})
+        self.config = config if hasattr(config, "save_config") else dict(config or {})
         self._closed = False
         self._task: asyncio.Task | None = None
         self._web_tokens: dict[str, tuple[str, int]] = {}
         self._last_proactive_broadcast_at = 0.0
         self._web_action_guard: dict[tuple[str, str], float] = {}
         self._duel_lock = asyncio.Lock()
+        self._cloud_data: dict[str, Any] = {}
+        self._cloud_last_sync_at = 0.0
+        self._cloud_sync_lock = asyncio.Lock()
         self._schema = {}
         try:
             self._schema = json.loads((Path(__file__).parent / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -65,12 +71,240 @@ class Main(Star):
             base = Path("data")
         self.data_dir = base / "plugin_data" / PLUGIN_NAME
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._cloud_cache_path = self.data_dir / "cloud-data.json"
+        self._cloud_data = self._load_cloud_cache()
         self.db = Database(self.data_dir / "group_world.db")
         self.engine_db = GlobalPlayerDB(self.db)
         self.engine = WorldEngine(self.engine_db, self.config)
+        self._apply_cloud_data_to_engine()
+        self._cloud_client = CloudClient(
+            str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            str(self.config.get("cloud_api_key") or ""),
+            self._cloud_cache_path,
+            int(self.config.get("cloud_timeout_seconds", 12) or 12),
+        )
 
         self._register_web_api()
         logger.info("[群聊世界] 插件已加载，数据库：%s", self.db.path)
+
+    # ------------------------- cloud data -------------------------
+
+    def _load_cloud_cache(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self._cloud_cache_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _cloud_enabled(self) -> bool:
+        return bool(self.config.get("cloud_enabled", False) and str(self.config.get("cloud_api_key") or "").strip())
+
+    async def _cloud_sync_if_due(self, force: bool = False) -> dict[str, Any]:
+        if not self._cloud_enabled():
+            return self._cloud_data
+        if not force and not bool(self.config.get("cloud_auto_sync", True)):
+            return self._cloud_data
+        interval = max(1, int(self.config.get("cloud_sync_interval_minutes", 15) or 15)) * 60
+        if not force and (time.monotonic() - self._cloud_last_sync_at) < interval:
+            return self._cloud_data
+        async with self._cloud_sync_lock:
+            if not force and (time.monotonic() - self._cloud_last_sync_at) < interval:
+                return self._cloud_data
+            self._cloud_client = CloudClient(
+                str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+                str(self.config.get("cloud_api_key") or ""),
+                self._cloud_cache_path,
+                int(self.config.get("cloud_timeout_seconds", 12) or 12),
+            )
+            try:
+                selected = self._cloud_selected_package_nos()
+                self._cloud_data = await self._cloud_client.sync({
+                    "include_official": bool(self.config.get("cloud_use_official_content", True)),
+                    "include_own": bool(self.config.get("cloud_use_own_content", True)),
+                    "include_community": bool(self.config.get("cloud_use_community_content", True)),
+                    "include_packages": bool(self.config.get("cloud_sync_packages", True)),
+                    "selected_package_nos": selected,
+                })
+                self._cloud_data['selected_package_nos'] = selected
+                self._cloud_data.setdefault("custom_json_packages", [])
+                self._cloud_data.setdefault("selected_packages", [])
+                self._cloud_last_sync_at = time.monotonic()
+                self._apply_cloud_data_to_engine()
+                logger.info(
+                    "[群聊世界] 云端数据同步成功：Boss=%s 商品=%s 教程=%s JSON=%s 选中=%s",
+                    len(self._cloud_data.get("bosses", [])),
+                    len(self._cloud_data.get("products", [])),
+                    len(self._cloud_data.get("tutorials", {})),
+                    len(self._cloud_data.get("community_packages", [])),
+                    len(selected),
+                )
+            except Exception as exc:
+                logger.warning("[群聊世界] 云端数据同步失败，继续使用本地缓存：%s", exc)
+        return self._cloud_data
+
+    def _cloud_selected_package_nos(self) -> list[str]:
+        raw = self.config.get("cloud_selected_package_nos", [])
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for x in raw[:50]:
+            value = str(x).strip()
+            if value and len(value) <= 64 and value not in out:
+                out.append(value)
+        return out
+
+    def _cloud_shop_json(self) -> dict[str, Any]:
+        data = self._cloud_data.get("products", []) if isinstance(self._cloud_data, dict) else []
+        out: dict[str, Any] = {}
+        for item in data if isinstance(data, list) else []:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("item_no") or item.get("id") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not code or not name:
+                continue
+            try:
+                price = max(0, int(item.get("price", 0)))
+            except Exception:
+                continue
+            out[code] = [name, price, str(item.get("description") or item.get("intro") or "云端自定义商品")]
+        return out
+
+    def _merge_cloud_package_into_cache(self, package: dict[str, Any]) -> dict[str, int]:
+        """Cache a community package and merge only its safe, recognized data types."""
+        payload = package.get("payload") if isinstance(package.get("payload"), dict) else {}
+        self._cloud_data.setdefault("custom_json_packages", [])
+        package_id = str(package.get("package_no") or package.get("id") or "").strip()
+        if package_id:
+            existing = {str(x.get("package_no") or x.get("id")) for x in self._cloud_data["custom_json_packages"] if isinstance(x, dict)}
+            if package_id not in existing:
+                self._cloud_data["custom_json_packages"].append(package)
+        counts = {"bosses": 0, "products": 0, "monsters": 0, "npcs": 0, "tutorials": 0}
+        for key in ("bosses", "products", "monsters", "npcs"):
+            values = payload.get(key)
+            if isinstance(values, list):
+                current = self._cloud_data.setdefault(key, [])
+                seen = {str(x.get("id") or x.get("item_no") or x.get("code") or "") for x in current if isinstance(x, dict)}
+                for item in values[:500]:
+                    if not isinstance(item, dict):
+                        continue
+                    ident = str(item.get("id") or item.get("item_no") or item.get("code") or "").strip()
+                    if not ident or ident not in seen:
+                        current.append(item)
+                        seen.add(ident)
+                        counts[key] += 1
+        pages = payload.get("tutorials")
+        if isinstance(pages, dict):
+            tutorials = self._cloud_data.setdefault("tutorials", {})
+            for k, v in list(pages.items())[:100]:
+                if str(k).strip() and str(k) not in tutorials and isinstance(v, str):
+                    tutorials[str(k)] = v
+                    counts["tutorials"] += 1
+        return counts
+
+    def _cloud_active_merge_counts(self) -> dict[str, int]:
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        counts = {"products": 0, "bosses": 0, "monsters": 0, "npcs": 0, "tutorials": 0}
+        selected = data.get("selected_packages", [])
+        if not isinstance(selected, list):
+            return counts
+        for pkg in selected:
+            payload = pkg.get("payload") if isinstance(pkg, dict) and isinstance(pkg.get("payload"), dict) else {}
+            for key in ("products", "bosses", "monsters", "npcs"):
+                values = payload.get(key)
+                if isinstance(values, list):
+                    counts[key] += sum(1 for x in values[:500] if isinstance(x, dict))
+            pages = payload.get("tutorials")
+            if isinstance(pages, dict):
+                counts["tutorials"] += sum(1 for k, v in list(pages.items())[:100] if str(k).strip() and isinstance(v, str))
+        return counts
+
+    def _apply_cloud_data_to_engine(self) -> None:
+        """Build an isolated cloud catalog. Local custom config remains authoritative."""
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        data.setdefault("community_packages", [])
+        data.setdefault("custom_json_packages", [])
+        products: dict[str, Any] = {}
+        bosses: dict[str, Any] = {}
+        monsters: dict[str, Any] = {}
+        npcs: list[dict[str, Any]] = []
+        tutorials: dict[str, str] = {}
+
+        def merge_package_payload(pkg: dict[str, Any]) -> None:
+            payload = pkg.get("payload") if isinstance(pkg.get("payload"), dict) else {}
+            for key, target in (("products", products), ("bosses", bosses), ("monsters", monsters)):
+                vals = payload.get(key)
+                if not isinstance(vals, list):
+                    continue
+                for item in vals[:500]:
+                    if not isinstance(item, dict):
+                        continue
+                    ident = str(item.get("item_no") or item.get("id") or item.get("code") or "").strip()
+                    if ident:
+                        target[ident] = item
+            vals = payload.get("npcs")
+            if isinstance(vals, list):
+                for item in vals[:100]:
+                    if isinstance(item, dict) and item not in npcs:
+                        npcs.append(item)
+            vals = payload.get("tutorials")
+            if isinstance(vals, dict):
+                for k, v in list(vals.items())[:100]:
+                    if isinstance(v, str) and str(k) not in tutorials:
+                        tutorials[str(k)] = v
+
+        # Published catalog returned by the server.
+        for item in data.get("products", []) if isinstance(data.get("products"), list) else []:
+            if isinstance(item, dict):
+                ident = str(item.get("item_no") or item.get("id") or "").strip()
+                if ident:
+                    products[ident] = item
+        for item in data.get("bosses", []) if isinstance(data.get("bosses"), list) else []:
+            if isinstance(item, dict):
+                ident = str(item.get("id") or item.get("code") or item.get("boss_id") or "").strip()
+                if ident:
+                    bosses[ident] = item
+        for item in data.get("monsters", []) if isinstance(data.get("monsters"), list) else []:
+            if isinstance(item, dict):
+                ident = str(item.get("id") or "").strip()
+                if ident:
+                    monsters[ident] = item
+        for item in data.get("tutorials", {}) if isinstance(data.get("tutorials"), dict) else {}:
+            if isinstance(item, str):
+                tutorials[str(item)] = data["tutorials"][item]
+
+        # Selected JSON packages are additional content; a package can add entries but not run code.
+        selected = data.get("selected_packages", [])
+        if isinstance(selected, list):
+            for pkg in selected:
+                if isinstance(pkg, dict):
+                    merge_package_payload(pkg)
+
+        effects = {}
+        for code, item in products.items():
+            if isinstance(item, dict) and isinstance(item.get("effect"), dict):
+                safe = {}
+                for k in ("heal_hp", "heal_stamina", "add_coins", "add_exp"):
+                    try:
+                        safe[k] = max(0, min(10_000_000, int(item["effect"].get(k, 0) or 0)))
+                    except Exception:
+                        pass
+                if safe:
+                    effects[code] = safe
+
+        self.config["cloud_shop_catalog_json"] = json.dumps({
+            str(code): [str(item.get("name") or "云端商品"), max(0, int(item.get("price", 0) or 0)), str(item.get("description") or item.get("intro") or "云端自定义商品")]
+            for code, item in products.items() if isinstance(item, dict)
+        }, ensure_ascii=False)
+        self.config["cloud_shop_effects_json"] = json.dumps(effects, ensure_ascii=False)
+        self.config["cloud_monster_catalog_json"] = json.dumps(monsters, ensure_ascii=False)
+        self.config["cloud_tutorial_pages_json"] = json.dumps(tutorials, ensure_ascii=False)
+        self.config["cloud_boss_catalog_json"] = json.dumps(bosses, ensure_ascii=False)
+        self.config["cloud_npc_catalog_json"] = json.dumps(npcs, ensure_ascii=False)
+
+    def _cloud_monster_list(self) -> list[dict[str, Any]]:
+        data = self._cloud_data.get("monsters", []) if isinstance(self._cloud_data, dict) else []
+        return [dict(x) for x in data if isinstance(x, dict) and x.get("id") and x.get("name")] if isinstance(data, list) else []
 
     # ------------------------- helpers -------------------------
 
@@ -187,11 +421,12 @@ class Main(Star):
             logger.warning("[群聊世界] 主动消息发送失败: %s", exc)
             return False
 
-    async def _ai_npc_reply(self, event: AstrMessageEvent, base: str) -> str:
+    async def _ai_npc_reply(self, event: AstrMessageEvent, base: str, *, story: bool = False) -> str:
         try:
             group_id=self._group(event)
-            row=self.db.get_group(group_id) if group_id else None
-            enabled=bool(self.config.get("ai_enabled",False)) and bool(self.config.get("ai_npc_dialogue_enabled",True)) and bool(row["ai_enabled"] if row and "ai_enabled" in row.keys() else True)
+            enabled=bool(self.config.get("ai_enabled",False)) and bool(self.config.get("ai_npc_dialogue_enabled",True))
+            if story:
+                enabled = enabled and bool(self.config.get("ai_story_enabled",True))
             if not enabled:
                 return base
             provider_id=await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
@@ -227,6 +462,8 @@ class Main(Star):
     async def _scheduler_tick(self) -> None:
         if not self.config.get("enabled", True):
             return
+        if bool(self.config.get("cloud_auto_sync", True)):
+            await self._cloud_sync_if_due(force=False)
         # Finish countdown-based revivals even when the player does not send a message.
         for rp in self.db.get_due_respawns(int(time.time()),100):
             try:
@@ -409,7 +646,7 @@ class Main(Star):
             "📖 【群聊世界命令】\n\n"
             "👤 玩家：/注册 [邀请码] /我的 /签到 /邀请码 /教程 /继续教程 /跳过教程 /地图\n"
             "🗺️ 冒险：/探索 /探索 深度 /探索 危险 /钓鱼 /挖矿 /打工 /怪物\n"
-            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗 /决斗状态 /决斗攻击 /决斗技能 /战后留言 /复活状态\n"
+            "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗匹配 /决斗状态 /决斗攻击 /决斗技能 /战后留言 /复活状态\n"
             "🎒 物品：/背包 /商店 /购买 ID 数量 /使用 ID 数量 /装备 /穿戴 ID /强化 ID\n"
             "🐾 宠物：/宠物 /抽宠物 /出战宠物 ID\n"
             "⭐ 成长：/职业 /转职 职业 /任务 /任务领取 /成就\n"
@@ -708,7 +945,7 @@ class Main(Star):
         result=self.engine.npc_interact(group,uid,name,args[0])
         # Optional AI only enriches NPC dialogue; gameplay rewards are deterministic and stay usable without AI.
         if len(args)>=2 and args[0].lower() in {"talk","对话","聊天"}:
-            result = await self._ai_npc_reply(event, result)
+            result = await self._ai_npc_reply(event, result, story=True)
         yield event.plain_result(result)
 
     @filter.command("NPC对话", alias={"与NPC对话","NPC聊天"})
@@ -716,7 +953,7 @@ class Main(Star):
         blocked=self._disabled_or_private(event)
         if blocked: yield event.plain_result(blocked); return
         base=self.engine.npc_interact(self._group(event),self._user(event),self._name(event),"talk")
-        yield event.plain_result(await self._ai_npc_reply(event,base))
+        yield event.plain_result(await self._ai_npc_reply(event,base,story=True))
 
     @filter.command("地图")
     async def map(self, event: AstrMessageEvent):
@@ -1353,7 +1590,7 @@ class Main(Star):
         return json_response({
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
-            "version": "1.6.2",
+            "version": "1.9.0",
             "username": username,
             "authenticated": authed,
             "password_configured": password_configured,
@@ -1493,11 +1730,14 @@ class Main(Star):
                 return error_response(f"{key} 必须是字符串", status_code=400)
             if typ == "list" and not isinstance(value, list):
                 return error_response(f"{key} 必须是数组", status_code=400)
+            if key == "cloud_selected_package_nos":
+                if len(value) > 50 or any(not isinstance(x, str) or not x.strip() or len(x) > 64 for x in value):
+                    return error_response("cloud_selected_package_nos 最多 50 个，每个编号最长 64 字符", status_code=400)
             slider = spec.get("slider")
             if slider and isinstance(value, (int, float)):
                 if value < slider["min"] or value > slider["max"]:
                     return error_response(f"{key} 超出范围", status_code=400)
-            if key in {"group_overrides_json", "shop_catalog_json", "event_catalog_json", "tutorial_pages_json"}:
+            if key in {"group_overrides_json", "shop_catalog_json", "event_catalog_json", "tutorial_pages_json", "boss_catalog_json"}:
                 try:
                     json.loads(value or "{}")
                 except Exception:
@@ -1550,7 +1790,7 @@ class Main(Star):
             return json_response({"ok": True, "message": text, "broadcast": True})
         if action == "save_settings":
             raw_payload=payload.get("settings") if isinstance(payload.get("settings"),dict) else {}
-            allowed={"world_weather","world_location","world_event_enabled","explore_enabled","monster_enabled","monster_chance_percent","monster_max_count","monster_multi_chance_percent","npc_enabled","npc_chance_percent","npc_interval_minutes","ai_enabled"}
+            allowed={"world_weather","world_location","world_event_enabled","explore_enabled","monster_enabled","monster_chance_percent","monster_max_count","monster_multi_chance_percent","npc_enabled","npc_chance_percent","npc_interval_minutes"}
             clean={}
             for k,v in raw_payload.items():
                 if k not in allowed: continue
@@ -1752,6 +1992,40 @@ class Main(Star):
             return file_response(target, filename=target.name, content_type="application/json")
         return json_response(snapshot)
 
+    def _validate_import_config(self, imported: Any) -> tuple[dict[str, Any], list[str]]:
+        if not isinstance(imported, dict):
+            return {}, ["快照中的 config 不是对象，已跳过配置导入。"]
+        changes: dict[str, Any] = {}
+        warnings: list[str] = []
+        for key, value in imported.items():
+            spec = self._schema.get(key)
+            if not spec:
+                continue
+            if spec.get("secret") and value == "********":
+                continue
+            typ = spec.get("type")
+            valid = True
+            if typ == "bool": valid = isinstance(value, bool)
+            elif typ == "int": valid = isinstance(value, int) and not isinstance(value, bool)
+            elif typ == "float": valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+            elif typ in {"string", "text"}: valid = isinstance(value, str)
+            elif typ == "list": valid = isinstance(value, list)
+            if not valid:
+                warnings.append(f"{key} 类型不匹配，已跳过")
+                continue
+            slider = spec.get("slider")
+            if slider and isinstance(value, (int, float)) and not (slider["min"] <= value <= slider["max"]):
+                warnings.append(f"{key} 超出范围，已跳过")
+                continue
+            if key in {"group_overrides_json", "shop_catalog_json", "event_catalog_json", "tutorial_pages_json", "boss_catalog_json", "tip_catalog_json"}:
+                try:
+                    json.loads(value or "{}")
+                except Exception:
+                    warnings.append(f"{key} JSON 无效，已跳过")
+                    continue
+            changes[key] = value
+        return changes, warnings
+
     async def page_data_import(self):
         payload = await request.json(default={}) if request else {}
         token = str(payload.get("token") or "")
@@ -1765,7 +2039,9 @@ class Main(Star):
                 return error_response(f"导入文件不是有效 JSON：{exc}", status_code=400)
         if not isinstance(raw, dict):
             return error_response("snapshot 必须是 JSON 对象。", status_code=400)
-        tables = raw.get("tables") if isinstance(raw.get("tables"), dict) else {}
+        if raw.get("format") and raw.get("format") != "astrbot_plugin_group_world_snapshot":
+            return error_response("不是群聊世界数据快照，已拒绝导入。", status_code=400)
+        tables = dict(raw.get("tables")) if isinstance(raw.get("tables"), dict) else {}
         # Accept legacy V1.5 top-level exports too.
         legacy_map = {"groups":"groups", "players":"players", "transactions":"transactions", "events":"world_event_logs", "admin_logs":"admin_logs"}
         for old_key, table_name in legacy_map.items():
@@ -1777,52 +2053,22 @@ class Main(Star):
             "auto_battles","world_event_logs","monster_encounters","player_skills","skill_cooldowns","npc_interactions","action_logs",
         }
         selected = [(t, rows) for t, rows in tables.items() if t in allowed_tables and isinstance(rows, list)]
-        imported_config = 0
-        skipped_config = 0
-        incoming_config = raw.get("config") if isinstance(raw.get("config"), dict) else {}
-        # V2 exports include config. Restore only schema-known, type-safe values;
-        # never overwrite secrets with the masked `********` value.
-        config_changes = {}
-        for key, value in incoming_config.items():
-            spec = self._schema.get(key)
-            if not spec or spec.get("secret") or value == "********":
-                skipped_config += 1
-                continue
-            typ = spec.get("type")
-            valid = ((typ == "bool" and isinstance(value, bool)) or
-                     (typ == "int" and isinstance(value, int) and not isinstance(value, bool)) or
-                     (typ == "float" and isinstance(value, (int, float)) and not isinstance(value, bool)) or
-                     (typ in {"string", "text"} and isinstance(value, str)) or
-                     (typ == "list" and isinstance(value, list)))
-            if not valid:
-                skipped_config += 1
-                continue
-            slider = spec.get("slider")
-            if slider and isinstance(value, (int, float)) and not (slider["min"] <= value <= slider["max"]):
-                skipped_config += 1
-                continue
-            if key in {"group_overrides_json","shop_catalog_json","event_catalog_json","tutorial_pages_json","tip_catalog_json","pet_rarity_json"}:
-                try:
-                    fallback = "[]" if key == "tutorial_pages_json" else "{}"
-                    json.loads(value or fallback)
-                except Exception:
-                    skipped_config += 1
-                    continue
-            config_changes[key] = value
+        import_config = bool(payload.get("import_config", True))
+        config_changes, config_warnings = self._validate_import_config(raw.get("config")) if import_config else ({}, [])
         if not selected and not config_changes:
             return error_response("没有找到可导入的数据表或有效配置。", status_code=400)
-        # Create a safety backup before changing any rows.
+        # Create a safety backup before changing any rows or config.
         backup = self._build_data_snapshot("")
         backup_path = self.data_dir / f"pre-import-backup-{int(time.time())}.json"
         backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2), encoding="utf-8")
         imported = 0
         skipped = 0
-        with self.db.transaction() as conn:
-            for table, rows in selected:
-                actual_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-                if not actual_cols:
-                    skipped += len(rows)
-                    continue
+        for table, rows in selected:
+            actual_cols = [r[1] for r in self.db.conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if not actual_cols:
+                skipped += len(rows)
+                continue
+            with self.db.transaction() as conn:
                 for row in rows[:20000]:
                     if not isinstance(row, dict):
                         skipped += 1
@@ -1841,17 +2087,235 @@ class Main(Star):
                         skipped += 1
         if config_changes:
             self.config.update(config_changes)
-            imported_config = len(config_changes)
             try:
                 save = getattr(self.config, "save_config", None)
                 if callable(save):
                     save()
             except Exception as exc:
                 logger.warning("[群聊世界] 导入配置保存失败：%s", exc)
-        total_skipped = skipped + skipped_config
-        self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "data_import", None, f"imported={imported},skipped={total_skipped},config={imported_config},backup={backup_path.name}")
-        msg=f"导入完成：{imported} 行数据" + (f" + {imported_config} 项配置" if imported_config else "") + f"，跳过 {total_skipped} 项。"
-        return json_response({"ok": True, "message": msg, "imported": imported, "skipped": total_skipped, "imported_config": imported_config, "backup": backup_path.name})
+                config_warnings.append("数据库已导入，但配置保存到文件失败，请检查 AstrBot 权限。")
+        self.db.add_admin_log(
+            "__SYSTEM__", self._web_username() or "web", "data_import", None,
+            f"imported={imported},skipped={skipped},config={len(config_changes)},backup={backup_path.name}",
+        )
+        warning_text = ("；".join(config_warnings)) if config_warnings else ""
+        msg = f"导入完成：{imported} 行，跳过 {skipped} 行。"
+        if config_changes:
+            msg += f" 已恢复 {len(config_changes)} 项配置。"
+        if warning_text:
+            msg += f" 提示：{warning_text}"
+        return json_response({
+            "ok": True, "message": msg, "imported": imported, "skipped": skipped,
+            "config_imported": len(config_changes), "warnings": config_warnings, "backup": backup_path.name,
+        })
+
+    async def page_cloud_status(self):
+        denied = self._require_web(False)
+        if denied:
+            return denied
+        enabled = bool(self.config.get("cloud_enabled", False))
+        has_key = bool(str(self.config.get("cloud_api_key") or "").strip())
+        configured = has_key
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        remote = {
+            "configured": configured,
+            "enabled": enabled,
+            "reachable": False,
+            "message": "未配置云端 API Key" if not has_key else ("已配置 API Key，但云端玩法未启用" if not enabled else "正在连接云端"),
+        }
+        if configured:
+            self._cloud_client = CloudClient(
+                str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+                str(self.config.get("cloud_api_key") or ""),
+                self._cloud_cache_path,
+                int(self.config.get("cloud_timeout_seconds", 12) or 12),
+            )
+            remote = await self._cloud_client.status()
+            if remote.get("reachable") and enabled:
+                data = await self._cloud_sync_if_due(force=False)
+        return self._cloud_status_payload(remote, data)
+
+    def _cloud_status_payload(self, remote: dict[str, Any], data: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = data if isinstance(data, dict) else (self._cloud_data if isinstance(self._cloud_data, dict) else {})
+        return {
+            **remote,
+            "configured": bool(str(self.config.get("cloud_api_key") or "").strip()),
+            "enabled": bool(self.config.get("cloud_enabled", False)),
+            "base_url": self._cloud_client.base_url if getattr(self, "_cloud_client", None) else str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            "last_sync_at": data.get("synced_at", 0),
+            "counts": {
+                "bosses": len(data.get("bosses", []) if isinstance(data.get("bosses"), list) else []),
+                "products": len(data.get("products", []) if isinstance(data.get("products"), list) else []),
+                "tutorials": len(data.get("tutorials", {}) if isinstance(data.get("tutorials"), dict) else {}),
+                "monsters": len(data.get("monsters", []) if isinstance(data.get("monsters"), list) else []),
+                "npcs": len(data.get("npcs", []) if isinstance(data.get("npcs"), list) else []),
+                "community_packages": len(data.get("community_packages", []) if isinstance(data.get("community_packages"), list) else []),
+            },
+            "active_merge_counts": self._cloud_active_merge_counts(),
+            "community_enabled": bool(self.config.get("cloud_use_community_content", True)),
+            "package_sync_enabled": bool(self.config.get("cloud_sync_packages", True)),
+            "cache_file": self._cloud_cache_path.name,
+            "community_packages": data.get("community_packages", []) if isinstance(data.get("community_packages"), list) else [],
+            "selected_package_nos": self._cloud_selected_package_nos(),
+            "active_packages": data.get("selected_packages", []) if isinstance(data.get("selected_packages"), list) else [],
+            "products_catalog": data.get("products", []) if isinstance(data.get("products"), list) else [],
+        }
+
+    async def page_cloud_portal(self):
+        denied = self._require_web(False)
+        if denied:
+            return denied
+        has_key = bool(str(self.config.get("cloud_api_key") or "").strip())
+        enabled = bool(self.config.get("cloud_enabled", False))
+        self._cloud_client = CloudClient(
+            str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            str(self.config.get("cloud_api_key") or ""),
+            self._cloud_cache_path,
+            int(self.config.get("cloud_timeout_seconds", 12) or 12),
+        )
+        if not has_key:
+            return json_response({
+                "ok": True, "configured": False, "enabled": enabled, "reachable": False,
+                "message": "请先在下面填写 ysgl 网站生成的完整 API Key。",
+                "base_url": self._cloud_client.base_url,
+                "site": {}, "announcements": [],
+                **self._cloud_status_payload({"configured": False, "reachable": False, "message": "未配置云端 API Key"}),
+            })
+        remote = await self._cloud_client.status()
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        if remote.get("reachable") and enabled:
+            data = await self._cloud_sync_if_due(force=False)
+        site = {}
+        announcements = []
+        if remote.get("reachable"):
+            try:
+                site_data = await self._cloud_client.site_info()
+                site = site_data.get("site") if isinstance(site_data.get("site"), dict) else {}
+            except Exception as exc:
+                logger.debug("[群聊世界] 云端站点信息读取失败：%s", exc)
+            try:
+                announcements = await self._cloud_client.announcements()
+            except Exception as exc:
+                logger.debug("[群聊世界] 云端公告读取失败：%s", exc)
+        payload = self._cloud_status_payload(remote, data)
+        payload.update({"ok": True, "site": site, "announcements": announcements})
+        return json_response(payload)
+
+    async def page_cloud_announcements(self):
+        denied = self._require_web(False)
+        if denied:
+            return denied
+        self._cloud_client = CloudClient(
+            str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            str(self.config.get("cloud_api_key") or ""),
+            self._cloud_cache_path,
+            int(self.config.get("cloud_timeout_seconds", 12) or 12),
+        )
+        rows = await self._cloud_client.announcements()
+        return json_response({"ok": True, "announcements": rows})
+
+    async def page_cloud_sync(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        data = await self._cloud_sync_if_due(force=True)
+        return json_response({"ok": True, "message": "云端同步完成。", "data": data, "selected_package_nos": self._cloud_selected_package_nos(), "counts": {k: len(data.get(k, [] if k != "tutorials" else {})) for k in ("bosses","products","tutorials","monsters","npcs")}})
+
+    async def page_cloud_package_preview(self):
+        payload = await request.json(default={}) if request else {}
+        package_id = int(payload.get("package_id") or 0)
+        package_no = str(payload.get("package_no") or "").strip()
+        denied = self._require_web(False)
+        if denied: return denied
+        if package_id <= 0 and not package_no:
+            return json_response({"ok": False, "message": "缺少 JSON 数据包编号"}, status_code=400)
+        self._cloud_client = CloudClient(str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL), str(self.config.get("cloud_api_key") or ""), self._cloud_cache_path, int(self.config.get("cloud_timeout_seconds", 12) or 12))
+        package = await self._cloud_client.package(package_id, package_no)
+        if not package:
+            return json_response({"ok": False, "message": "JSON 数据包不存在或尚未审核通过"}, status_code=404)
+        # Preview never imports or activates the package.
+        return json_response({"ok": True, "package": package})
+
+    async def page_cloud_import_package(self):
+        payload = await request.json(default={}) if request else {}
+        token = str(payload.get("token") or "")
+        denied = self._require_web(True, token)
+        if denied: return denied
+        package_id = int(payload.get("package_id") or 0)
+        if package_id <= 0:
+            return json_response({"ok": False, "message": "缺少 JSON 数据包 ID"}, status_code=400)
+        self._cloud_client = CloudClient(str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL), str(self.config.get("cloud_api_key") or ""), self._cloud_cache_path, int(self.config.get("cloud_timeout_seconds", 12) or 12))
+        package = await self._cloud_client.package(package_id)
+        if not package:
+            return json_response({"ok": False, "message": "JSON 数据包不存在或当前 Key 无权获取"}, status_code=404)
+        counts = self._merge_cloud_package_into_cache(package)
+        self._cloud_data["synced_at"] = int(time.time())
+        self._cloud_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._cloud_cache_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._cloud_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(self._cloud_cache_path)
+        self._apply_cloud_data_to_engine()
+        return json_response({"ok": True, "message": "已获取并加入云端缓存。未知 JSON 字段不会自动执行。", "package": package, "merged": counts})
+
+    async def page_cloud_test(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        self._cloud_client = CloudClient(str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL), str(self.config.get("cloud_api_key") or ""), self._cloud_cache_path, int(self.config.get("cloud_timeout_seconds", 12) or 12))
+        result = await self._cloud_client.status()
+        return json_response(result)
+
+    async def page_cloud_local_export(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        def parse_cfg(key):
+            try:
+                value = self.config.get(key, "{}")
+                return json.loads(value or "{}")
+            except Exception:
+                return {}
+        export = {
+            "format": "astrbot_group_world_custom_package",
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "source": "astrbot_local_config",
+            "base_url": str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            "products": [{"item_no": str(k), "name": v[0], "price": int(v[1]), "description": v[2], "effect": {}} for k,v in parse_cfg("shop_catalog_json").items() if isinstance(v,list) and len(v)>=3],
+            "bosses": [{"id": str(k), **v} for k,v in parse_cfg("boss_catalog_json").items() if isinstance(v,dict) and v.get("name")],
+            "tutorials": parse_cfg("tutorial_pages_json"),
+            "monsters": [{"id": str(k), **v} for k,v in parse_cfg("monster_catalog_json").items() if isinstance(v,dict) and v.get("name")],
+            "packages": [],
+            "selected_package_nos": self._cloud_selected_package_nos(),
+        }
+        target = self.data_dir / f"local-custom-package-{int(time.time())}.json"
+        target.write_text(json.dumps(export, ensure_ascii=False, indent=2), encoding="utf-8")
+        if file_response:
+            return file_response(target, filename=target.name, content_type="application/json")
+        return json_response(export)
+
+    async def page_cloud_export(self):
+        denied = self._require_web(False)
+        if denied: return denied
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        export = {
+            "format": "astrbot_group_world_cloud_package",
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "source": "cloud-cache",
+            "base_url": str(self.config.get("cloud_base_url") or CLOUD_DEFAULT_URL),
+            "bosses": data.get("bosses", []),
+            "products": data.get("products", []),
+            "tutorials": data.get("tutorials", {}),
+            "monsters": data.get("monsters", []),
+            "npcs": data.get("npcs", []),
+            "community_packages": data.get("community_packages", []),
+            "custom_json_packages": data.get("custom_json_packages", []),
+        }
+        target = self.data_dir / f"cloud-package-{int(time.time())}.json"
+        target.write_text(json.dumps(export, ensure_ascii=False, indent=2), encoding="utf-8")
+        if file_response:
+            return file_response(target, filename=target.name, content_type="application/json")
+        return json_response(export)
 
     def _register_web_api(self) -> None:
         if not hasattr(self.context, "register_web_api") or not json_response:
@@ -1873,6 +2337,15 @@ class Main(Star):
             ("data/import", self.page_data_import, ["POST"], "群聊世界数据导入"),
             ("tasks", self.page_tasks, ["GET"], "群聊世界任务数据"),
             ("tutorials", self.page_tutorials, ["GET"], "群聊世界教程数据"),
+            ("cloud/portal", self.page_cloud_portal, ["GET"], "群聊世界云端总览"),
+            ("cloud/announcements", self.page_cloud_announcements, ["GET"], "群聊世界云端公告"),
+            ("cloud/status", self.page_cloud_status, ["GET"], "群聊世界云端状态"),
+            ("cloud/test", self.page_cloud_test, ["GET"], "群聊世界云端连接测试"),
+            ("cloud/sync", self.page_cloud_sync, ["POST"], "群聊世界云端数据同步"),
+            ("cloud/package-preview", self.page_cloud_package_preview, ["POST"], "预览公开 JSON 数据包"),
+            ("cloud/import-package", self.page_cloud_import_package, ["POST"], "获取并导入社区 JSON 数据包"),
+            ("cloud/export", self.page_cloud_export, ["GET"], "群聊世界云端数据导出"),
+            ("cloud/local-export", self.page_cloud_local_export, ["GET"], "群聊世界本地自定义数据导出"),
         ]
         for path, handler, methods, desc in routes:
             try:

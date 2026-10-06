@@ -242,10 +242,10 @@
   "explore_reward_multiplier": {
     "description": "🗺️ 探索收益倍率",
     "type": "float",
-    "default": 1,
+    "default": 1.0,
     "slider": {
       "min": 0.1,
-      "max": 5,
+      "max": 5.0,
       "step": 0.1
     }
   },
@@ -369,7 +369,7 @@
   "daily_task_reward_multiplier": {
     "description": "📋 每日任务奖励倍率",
     "type": "float",
-    "default": 1,
+    "default": 1.0,
     "slider": {
       "min": 0,
       "max": 5,
@@ -470,6 +470,14 @@
       "max": 1440,
       "step": 1
     }
+  },
+  "boss_catalog_json": {
+    "type": "text",
+    "default": "{}",
+    "description": "🐉 本地自定义 Boss JSON。字段：name/hp/damage_base/top_reward/reward_decay/min_reward/duration_hours/description。云端 Boss 会单独合并。",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
   },
   "boss_enabled": {
     "description": "🐉 启用世界 Boss",
@@ -722,10 +730,10 @@
     }
   },
   "auto_battle_ai_enabled": {
-    "description": "⚔️ AI 子项：自动战斗策略（默认开启）",
+    "description": "🧠 自动战斗 AI 策略增强",
     "type": "bool",
     "default": true,
-    "hint": "只有 AI 总开关开启时生效。仅决定技能选择策略，不改变基础伤害数值。"
+    "hint": "仅改变技能选择策略，不改变基础伤害数值。"
   },
   "auto_battle_ai_aggression": {
     "description": "🧠 自动战斗攻击倾向",
@@ -768,11 +776,10 @@
     }
   },
   "ai_story_enabled": {
-    "description": "兼容旧版 AI 故事开关（不再在后台显示）",
+    "description": "🧠 AI 故事互动增强",
     "type": "bool",
-    "default": false,
-    "hint": "兼容旧版本。新版可使用 ai_enabled 与 ai_npc_dialogue_enabled；AI 关闭不会影响正常游戏。",
-    "invisible": true
+    "default": true,
+    "hint": "子选项默认开启；只有 AI 总开关开启且 AI NPC 对话增强也开启时才会实际调用模型。"
   },
   "data_retention_days": {
     "description": "🗄️ 日志保留天数",
@@ -846,11 +853,11 @@
   },
   "monster_reward_multiplier": {
     "type": "float",
-    "default": 1,
+    "default": 1.0,
     "description": "怪物奖励倍率。",
     "slider": {
       "min": 0.1,
-      "max": 5,
+      "max": 5.0,
       "step": 0.1
     }
   },
@@ -951,14 +958,14 @@
   "ai_enabled": {
     "type": "bool",
     "default": false,
-    "description": "🤖 AI 总开关（主开关）",
-    "hint": "全局 AI 总开关。关闭后 NPC AI 对话、自动战斗 AI 策略、决斗 AI 增强统一停用；普通玩法和基础战斗仍正常运行。"
+    "description": "🧠 AI 总开关",
+    "hint": "总开关关闭时所有 AI 增强都不运行。开启后由下方子选项分别控制；AI 只负责表达增强，不参与金币、伤害、掉落、概率等核心数值计算。"
   },
   "ai_npc_dialogue_enabled": {
     "type": "bool",
     "default": true,
-    "description": "🧑‍🌾 AI 子项：NPC 对话增强（默认开启）",
-    "hint": "只有 AI 总开关开启时生效。"
+    "description": "🧠 AI NPC 对话增强",
+    "hint": "子选项默认开启；只有 AI 总开关开启后才会实际运行。"
   },
   "ai_max_reply_chars": {
     "type": "int",
@@ -1007,7 +1014,7 @@
     "description": "🧪 使用复活药剂后的生命比例。",
     "slider": {
       "min": 0.1,
-      "max": 1,
+      "max": 1.0,
       "step": 0.05
     }
   },
@@ -1027,7 +1034,7 @@
     "description": "⏳ 倒计时自动复活后的生命比例。",
     "slider": {
       "min": 0.1,
-      "max": 1,
+      "max": 1.0,
       "step": 0.05
     }
   },
@@ -1089,8 +1096,7 @@
   "duel_ai_enhance": {
     "type": "bool",
     "default": true,
-    "description": "⚔️ AI 子项：决斗策略增强（默认开启）",
-    "hint": "只有 AI 总开关开启时生效，不让 AI 直接决定伤害数值。"
+    "description": "🧠 决斗 AI 增强：用于 NPC/自动战斗策略，不让 AI 直接决定伤害数值。"
   },
   "duel_ai_aggression": {
     "type": "float",
