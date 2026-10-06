@@ -270,6 +270,9 @@ class WorldEngine:
 
     def tutorial_page(self, step: int, group_id: str | None = None) -> str:
         custom = self.json_cfg("tutorial_pages_json", group_id)
+        cloud = self.json_cfg("cloud_tutorial_pages_json", group_id)
+        if str(step) not in custom and isinstance(cloud.get(str(step)), str):
+            custom[str(step)] = cloud[str(step)]
         if str(step) in custom and isinstance(custom[str(step)], str):
             return str(custom[str(step)])
         pages={
@@ -566,7 +569,8 @@ class WorldEngine:
     def _monster_templates(self,group_id:str)->dict:
         data=dict(MONSTER_TEMPLATES)
         custom=self.json_cfg("monster_catalog_json",group_id)
-        for mid,val in custom.items():
+        cloud=self.json_cfg("cloud_monster_catalog_json",group_id)
+        for mid,val in {**cloud, **custom}.items():
             if isinstance(val,dict) and val.get("name"):
                 data[str(mid)]={**MONSTER_TEMPLATES.get(str(mid),{}),**val,"id":str(mid)}
         return data
@@ -816,8 +820,6 @@ class WorldEngine:
         choices = [str(r["skill_id"]) for r in rows if str(r["skill_id"]) in SKILLS]
         if not choices:
             return "普攻"
-        # Global AI master switch gates every AI enhancement. Basic auto battle
-        # remains available when AI is disabled.
         if not bool(self.cfg("ai_enabled", None, False)) or not bool(self.cfg("auto_battle_ai_enabled", None, True)):
             return choices[0]
         aggression = max(0.0, min(1.0, float(self.cfg("auto_battle_ai_aggression", None, 0.65))))
@@ -1040,8 +1042,9 @@ class WorldEngine:
 
     def _shop_catalog(self, group_id: str) -> dict[str, tuple[str, int, str]]:
         catalog = dict(SHOP)
+        cloud = self.json_cfg("cloud_shop_catalog_json", group_id)
         custom = self.json_cfg("shop_catalog_json", group_id)
-        for item_id, value in custom.items():
+        for item_id, value in {**cloud, **custom}.items():
             if isinstance(value, list) and len(value) >= 3:
                 try:
                     catalog[str(item_id)] = (str(value[0]), int(value[1]), str(value[2]))
@@ -1209,11 +1212,27 @@ class WorldEngine:
         if not bool(self.cfg("boss_enabled", group_id, True)):
             return "🐉 管理员已关闭世界 Boss。"
         group = self.db.get_group(group_id)
+        if group is None:
+            group = self.db.upsert_group(group_id)
         if group and group["boss_active"]:
             return "🐉 当前已经有 Boss，先把它击败或结束。"
+        local_profiles = self.json_cfg("boss_catalog_json", group_id)
+        cloud_profiles = self.json_cfg("cloud_boss_catalog_json", group_id)
+        profiles = {**cloud_profiles, **local_profiles}
+        profile = None
+        if boss_name:
+            for value in profiles.values():
+                if isinstance(value, dict) and str(value.get("name")) == str(boss_name):
+                    profile = dict(value); break
+        elif profiles:
+            key = random.choice(list(profiles.keys()))
+            profile = dict(profiles[key]) if isinstance(profiles[key], dict) else None
         names = ["远古黑龙", "深渊巨兽", "熔岩领主", "虚空魔神", "冰霜女王"]
-        name = boss_name or random.choice(names)
-        hp = int(self.cfg("boss_max_hp", group_id, 100000))
+        name = str((profile or {}).get("name") or boss_name or random.choice(names))
+        hp = max(1, int((profile or {}).get("hp", self.cfg("boss_max_hp", group_id, 100000))))
+        if profile is not None:
+            profile["name"] = name
+            profile["hp"] = hp
         now = datetime.now(timezone.utc)
         self.db.reset_boss_damage(group_id)
         self.db.update_group(
@@ -1222,11 +1241,13 @@ class WorldEngine:
             boss_name=name,
             boss_hp=hp,
             boss_max_hp=hp,
+            boss_profile_json=json.dumps(profile or {}, ensure_ascii=False),
             boss_started_at=now.isoformat(timespec="seconds"),
-            boss_ends_at=(now.timestamp() + int(self.cfg("boss_duration_hours", group_id, 4)) * 3600),
+            boss_ends_at=(now.timestamp() + int((profile or {}).get("duration_hours", self.cfg("boss_duration_hours", group_id, 4))) * 3600),
             last_boss_at=now.isoformat(timespec="seconds"),
         )
-        return f"🐉【世界 Boss 降临】\n{ name } 出现在群聊世界！\nHP：{fmt_num(hp)}\n\n快使用 `/攻击` 参与战斗！"
+        desc = str((profile or {}).get("description") or "")
+        return f"🐉【世界 Boss 降临】\n{name} 出现在群聊世界！\nHP：{fmt_num(hp)}" + (f"\n📖 {desc}" if desc else "") + "\n\n快使用 `/攻击` 参与战斗！"
 
     def attack_boss(self, group_id: str, user_id: str, name: str) -> Result:
         player, _ = self.ensure_player(group_id, user_id, name)
@@ -1244,7 +1265,11 @@ class WorldEngine:
         equip = self.db.get_equipped_stats(group_id, user_id)
         pet = self.db.get_active_pet(group_id, user_id)
         pet_atk = pet["attack"] if pet else 0
-        base = int(self.cfg("boss_damage_base", group_id, 80))
+        try:
+            boss_profile = json.loads(str(group["boss_profile_json"] or "{}"))
+        except Exception:
+            boss_profile = {}
+        base = int(boss_profile.get("damage_base", self.cfg("boss_damage_base", group_id, 80)))
         damage = random.randint(max(1, base // 2), base * 2) + player["level"] * 18 + equip["attack"] + pet_atk * 3
         if player["profession"] == "战士":
             damage = int(damage * 1.2)
@@ -1287,15 +1312,19 @@ class WorldEngine:
         ranking = self.db.get_boss_ranking(group_id, 10)
         lines = [f"🏆【{name} 已被击败！】", "", "贡献榜："]
         for i, row in enumerate(ranking, 1):
-            top = int(self.cfg("boss_top_reward", group_id, 8000))
-            decay = int(self.cfg("boss_reward_decay", group_id, 600))
-            floor = int(self.cfg("boss_min_reward", group_id, 1000))
+            try:
+                boss_profile = json.loads(str(group["boss_profile_json"] or "{}"))
+            except Exception:
+                boss_profile = {}
+            top = int(boss_profile.get("top_reward", self.cfg("boss_top_reward", group_id, 8000)))
+            decay = int(boss_profile.get("reward_decay", self.cfg("boss_reward_decay", group_id, 600)))
+            floor = int(boss_profile.get("min_reward", self.cfg("boss_min_reward", group_id, 1000)))
             reward = max(floor, top - (i - 1) * decay)
             self.db.wallet_change(group_id, row["user_id"], coins_delta=reward, kind="boss_reward", note=f"击败{name}贡献第{i}名")
             self.db.change_exp(group_id, row["user_id"], reward // 10)
             lines.append(f"{i}. {row['name']}｜{fmt_num(row['damage'])}伤害｜+{fmt_num(reward)}💰")
             self.db.unlock_achievement(group_id, row["user_id"], "boss_hunter")
-        self.db.update_group(group_id, boss_active=0, boss_hp=0, boss_name=None, boss_max_hp=0, boss_started_at=None, boss_ends_at=None)
+        self.db.update_group(group_id, boss_active=0, boss_hp=0, boss_name=None, boss_max_hp=0, boss_started_at=None, boss_ends_at=None, boss_profile_json="{}")
         self.db.reset_boss_damage(group_id)
         if finisher_id:
             self.db.wallet_change(group_id, finisher_id, gems_delta=2, kind="boss_finisher", note="Boss终结奖励")
@@ -1313,14 +1342,11 @@ class WorldEngine:
     def spawn_npc(self, group_id: str) -> str:
         if not self.group_feature_enabled(group_id,"npc_enabled","npc_enabled",True):
             return "🧑‍🌾 本群随机 NPC 系统当前已关闭。"
-        npc=random.choice(self.NPC_TEMPLATES)
+        npc=dict(random.choice(self.NPC_TEMPLATES))
+        npc["actions"]=[dict(a) for a in npc.get("actions",[])]
         duration=max(5,int(self.cfg("npc_duration_minutes",group_id,30)))
         raw=self.db.raw if hasattr(self.db,"raw") else self.db
-        # Every spawn is a fresh interaction instance. The template id is only
-        # a type id; claims must be scoped to the current spawn.
-        instance=dict(npc)
-        instance["id"]=f"{npc['id']}:{int(time.time())}:{random.getrandbits(32):08x}"
-        raw.set_current_npc(group_id,instance, int(time.time())+duration*60)
+        raw.set_current_npc(group_id,npc, int(time.time())+duration*60)
         options=" ｜ ".join(f"{i+1}.{a['label']}" for i,a in enumerate(npc['actions']))
         raw.log_world_event(group_id,"npc",npc["name"],npc["description"],None,"NPC",group_id)
         return f"🧑‍🌾【神秘 NPC 出现】\n{npc['name']}（{npc['role']}）来到了群聊世界！\n{npc['description']}\n\n可互动：{options}\n发送 `/NPC` 查看详情。\n⏳ NPC 将停留约 {duration} 分钟。"
@@ -1351,32 +1377,22 @@ class WorldEngine:
             return "🧑‍🌾 这位 NPC 已经给过你这份奖励了。试试其他互动选项。"
         player,_=self.ensure_player(group_id,user_id,name)
         reward=act.get("reward")
-        result_text=""
-        if reward=="coins":
-            gain=random.randint(600,1600)
-            self.db.wallet_change(group_id,user_id,coins_delta=gain,kind="npc",note=f"NPC {npc['name']} 交换")
-            result_text=f"🧑‍🌾 {npc['name']}：不错的材料！我愿意支付 💰{gain}。\n你的互动已完成。"
-        elif reward=="item":
-            iid,iname,qty=random.choice([("potion","体力药水",1),("ore","强化矿石",2),("food","冒险便当",2),("crystal","强化水晶",1)])
-            self.db.add_item(group_id,user_id,iid,iname,qty)
-            result_text=f"🎁 {npc['name']} 送给你【{iname}】 ×{qty}。\n你的互动已完成。"
-        elif reward=="luck":
-            new_luck=min(9999,int(player["luck"])+3)
-            self.db.raw.set_global_player_fields(user_id,{"luck":new_luck})
-            result_text=f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{new_luck}"
-        elif reward=="renown":
-            new_renown=min(999999,int(player["renown"])+20)
-            self.db.raw.set_global_player_fields(user_id,{"renown":new_renown})
-            result_text=f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{new_renown}"
-        else:
-            gain=random.randint(120,320)
-            self.db.change_exp(group_id,user_id,gain)
-            result_text=f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
-        # Do not persist a claim until the reward operation has succeeded. This
-        # prevents a failed first request from turning into a false “already
-        # rewarded” message on the next try.
         raw.mark_npc_action(group_id,user_id,npc["id"],key)
-        return result_text
+        if reward=="coins":
+            gain=random.randint(600,1600); raw.wallet_change(group_id,user_id,coins_delta=gain,kind="npc",note=f"NPC {npc['name']} 交换")
+            return f"🧑‍🌾 {npc['name']}：不错的材料！我愿意支付 💰{gain}。\n你的互动已完成。"
+        if reward=="item":
+            iid,iname,qty=random.choice([("potion","体力药水",1),("ore","强化矿石",2),("food","冒险便当",2),("crystal","强化水晶",1)])
+            raw.add_item(group_id,user_id,iid,iname,qty)
+            return f"🎁 {npc['name']} 送给你【{iname}】 ×{qty}。\n你的互动已完成。"
+        if reward=="luck":
+            raw.set_global_player_fields(user_id,{"luck":min(9999,int(player["luck"])+3)})
+            return f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{int(player['luck'])+3}"
+        if reward=="renown":
+            raw.set_global_player_fields(user_id,{"renown":min(999999,int(player["renown"])+20)})
+            return f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{int(player['renown'])+20}"
+        gain=random.randint(120,320); raw.change_exp(group_id,user_id,gain)
+        return f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
 
     def random_tip(self, group_id: str) -> str:
         tips=[
@@ -1535,6 +1551,27 @@ class WorldEngine:
                 "last_combat_group_id": group_id, "last_combat_at": utc_ts_iso(),
             })
             return Result(f"✨ 复活成功！消耗复活药剂 ×1。\n❤️ 战斗生命恢复至 {hp}/{p['max_hp']}。")
+        # Cloud products may declare safe, numeric effects. They never execute
+        # arbitrary code: only the four documented fields below are accepted.
+        effects = self.json_cfg("cloud_shop_effects_json", group_id)
+        effect = effects.get(item_id) if isinstance(effects, dict) else None
+        if isinstance(effect, dict):
+            hp_gain = max(0, int(effect.get("heal_hp", 0) or 0))
+            stamina_gain = max(0, int(effect.get("heal_stamina", 0) or 0))
+            coins_gain = max(0, int(effect.get("add_coins", 0) or 0))
+            exp_gain = max(0, int(effect.get("add_exp", 0) or 0))
+            if hp_gain or stamina_gain or coins_gain or exp_gain:
+                self.db.add_item("__GLOBAL_USER__", user_id, item_id, str(item["item_name"]), -qty)
+                if hp_gain: self.db.change_hp(group_id, user_id, hp_gain * qty)
+                if stamina_gain: self.db.change_stamina(group_id, user_id, stamina_gain * qty)
+                if coins_gain: self.db.wallet_change("__GLOBAL_USER__", user_id, coins_delta=coins_gain * qty, kind="cloud_item", note=f"使用云端商品{item_id}")
+                if exp_gain: self.db.change_exp("__GLOBAL_USER__", user_id, exp_gain * qty)
+                parts=[]
+                if hp_gain: parts.append(f"❤️+{hp_gain*qty}生命")
+                if stamina_gain: parts.append(f"💚+{stamina_gain*qty}体力")
+                if coins_gain: parts.append(f"💰+{coins_gain*qty}金币")
+                if exp_gain: parts.append(f"⭐+{exp_gain*qty}EXP")
+                return Result(f"✅ 使用【{item['item_name']}】×{qty}：" + "、".join(parts))
         return Result("❌ 这个物品目前不能直接使用。")
 
     # ------------------------- cross-group PvP -------------------------

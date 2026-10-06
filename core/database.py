@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import uuid
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,7 +79,8 @@ class Database:
             current_npc_role TEXT,
             current_npc_description TEXT,
             current_npc_actions_json TEXT NOT NULL DEFAULT '[]',
-            current_npc_expires_at INTEGER NOT NULL DEFAULT 0
+            current_npc_expires_at INTEGER NOT NULL DEFAULT 0,
+            boss_profile_json TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS players (
@@ -454,6 +454,7 @@ class Database:
                 "current_npc_description": "ALTER TABLE groups ADD COLUMN current_npc_description TEXT",
                 "current_npc_actions_json": "ALTER TABLE groups ADD COLUMN current_npc_actions_json TEXT NOT NULL DEFAULT '[]'",
                 "current_npc_expires_at": "ALTER TABLE groups ADD COLUMN current_npc_expires_at INTEGER NOT NULL DEFAULT 0",
+                "boss_profile_json": "ALTER TABLE groups ADD COLUMN boss_profile_json TEXT NOT NULL DEFAULT '{}'",
             }
             for field, sql in group_migrations.items():
                 if field not in group_existing:
@@ -949,7 +950,7 @@ class Database:
     def update_group(self, group_id: str, **fields: Any) -> None:
         allowed = {
             "enabled", "session_origin", "last_event_at", "last_boss_at", "world_weather", "world_location",
-            "boss_active", "boss_name", "boss_hp", "boss_max_hp", "boss_started_at", "boss_ends_at",
+            "boss_active", "boss_name", "boss_hp", "boss_max_hp", "boss_started_at", "boss_ends_at", "boss_profile_json",
             "current_event_key", "current_event_expires_at", "current_event_effects_json", "world_event_enabled",
             "explore_enabled", "monster_enabled", "monster_chance_percent", "monster_max_count",
             "monster_multi_chance_percent", "npc_enabled", "npc_chance_percent", "npc_interval_minutes",
@@ -1211,10 +1212,15 @@ class Database:
             effects = {}
         return {"key": row["current_event_key"], "expires_at": int(row["current_event_expires_at"] or 0), "effects": effects}
 
-    def set_current_npc(self, group_id: str, npc: dict[str, Any], expires_at: int) -> None:
+    def set_current_npc(self, group_id: str, npc: dict[str, Any], expires_at: int) -> str:
+        # Each spawn gets its own interaction namespace. This prevents a prior
+        # appearance of the same NPC template (e.g. 璃月/fortune) from blocking
+        # rewards on the next appearance.
+        template_id = str(npc.get("id", "npc"))
+        instance_id = f"{template_id}@{time.time_ns()}@{int(expires_at)}"
         self.update_group(
             group_id,
-            current_npc_id=str(npc.get("id", "npc")),
+            current_npc_id=instance_id,
             current_npc_name=str(npc.get("name", "神秘 NPC")),
             current_npc_role=str(npc.get("role", "旅人")),
             current_npc_description=str(npc.get("description", ""))[:1000],
@@ -1222,6 +1228,7 @@ class Database:
             current_npc_expires_at=int(expires_at),
             last_npc_at=utc_now(),
         )
+        return instance_id
 
     def get_current_npc(self, group_id: str) -> Optional[dict[str, Any]]:
         row = self.get_group(group_id)
@@ -1231,20 +1238,13 @@ class Database:
         if int(row["current_npc_expires_at"] or 0) <= now:
             self.clear_current_npc(group_id)
             return None
-        # V1.6.1 used the static NPC template id (e.g. `fortune`) as the
-        # interaction identity. That made a later spawn inherit old claims.
-        # Migrate any still-active legacy NPC to a unique per-spawn identity.
-        npc_id = str(row["current_npc_id"] or "")
-        if ":" not in npc_id:
-            npc_id = f"{npc_id}:{uuid.uuid4().hex[:12]}"
-            self.update_group(group_id, current_npc_id=npc_id)
         try:
             actions = json.loads(row["current_npc_actions_json"] or "[]")
             if not isinstance(actions, list): actions = []
         except Exception:
             actions = []
         return {
-            "id": npc_id, "name": row["current_npc_name"], "role": row["current_npc_role"],
+            "id": row["current_npc_id"], "name": row["current_npc_name"], "role": row["current_npc_role"],
             "description": row["current_npc_description"], "actions": actions, "expires_at": int(row["current_npc_expires_at"] or 0),
         }
 
@@ -1252,10 +1252,34 @@ class Database:
         self.update_group(group_id, current_npc_id=None, current_npc_name=None, current_npc_role=None, current_npc_description=None, current_npc_actions_json="[]", current_npc_expires_at=0)
 
     def npc_action_claimed(self, group_id: str, user_id: str, npc_id: str, action: str) -> bool:
-        return bool(self.fetchone("SELECT 1 FROM npc_interactions WHERE group_id=? AND user_id=? AND npc_id=? AND action=?", (group_id,user_id,npc_id,action)))
+        row = self.fetchone(
+            "SELECT created_at FROM npc_interactions WHERE group_id=? AND user_id=? AND npc_id=? AND action=?",
+            (group_id, user_id, npc_id, action),
+        )
+        if not row:
+            return False
+        # New NPC spawns use unique instance IDs, so existence itself means claimed.
+        if "@" in str(npc_id):
+            return True
+        # Compatibility for pre-1.6.2 rows: a legacy template-id claim only blocks
+        # the currently active NPC if it was made during the current spawn.
+        group = self.get_group(group_id)
+        spawn_at = str(group["last_npc_at"] or "") if group else ""
+        created_at = str(row["created_at"] or "")
+        if spawn_at and created_at:
+            try:
+                return datetime.fromisoformat(created_at.replace("Z", "+00:00")) >= datetime.fromisoformat(spawn_at.replace("Z", "+00:00"))
+            except Exception:
+                pass
+        return True
 
     def mark_npc_action(self, group_id: str, user_id: str, npc_id: str, action: str) -> None:
-        self.execute("INSERT OR IGNORE INTO npc_interactions(group_id,user_id,npc_id,action,created_at) VALUES(?,?,?,?,?)", (group_id,user_id,npc_id,action,utc_now()))
+        now = utc_now()
+        self.execute(
+            "INSERT INTO npc_interactions(group_id,user_id,npc_id,action,created_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(group_id,user_id,npc_id,action) DO UPDATE SET created_at=excluded.created_at",
+            (group_id, user_id, npc_id, action, now),
+        )
 
     def ensure_invite_code(self, user_id: str, length: int = 6) -> str:
         import secrets, string
