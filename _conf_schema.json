@@ -242,10 +242,10 @@
   "explore_reward_multiplier": {
     "description": "🗺️ 探索收益倍率",
     "type": "float",
-    "default": 1.0,
+    "default": 1,
     "slider": {
       "min": 0.1,
-      "max": 5.0,
+      "max": 5,
       "step": 0.1
     }
   },
@@ -369,7 +369,7 @@
   "daily_task_reward_multiplier": {
     "description": "📋 每日任务奖励倍率",
     "type": "float",
-    "default": 1.0,
+    "default": 1,
     "slider": {
       "min": 0,
       "max": 5,
@@ -846,11 +846,11 @@
   },
   "monster_reward_multiplier": {
     "type": "float",
-    "default": 1.0,
+    "default": 1,
     "description": "怪物奖励倍率。",
     "slider": {
       "min": 0.1,
-      "max": 5.0,
+      "max": 5,
       "step": 0.1
     }
   },
@@ -1007,7 +1007,7 @@
     "description": "🧪 使用复活药剂后的生命比例。",
     "slider": {
       "min": 0.1,
-      "max": 1.0,
+      "max": 1,
       "step": 0.05
     }
   },
@@ -1027,7 +1027,7 @@
     "description": "⏳ 倒计时自动复活后的生命比例。",
     "slider": {
       "min": 0.1,
-      "max": 1.0,
+      "max": 1,
       "step": 0.05
     }
   },
@@ -1101,5 +1101,97 @@
       "max": 1,
       "step": 0.05
     }
+  },
+  "cloud_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "☁️ 启用 ysgl 云端玩法",
+    "hint": "与网站账号/权限相互独立；仅使用你在网站生成的 API Key 作为数据通行证。",
+    "invisible": true
+  },
+  "cloud_base_url": {
+    "type": "string",
+    "default": "https://ysgl.bot.cd/astrbot",
+    "description": "☁️ 云端网站地址",
+    "hint": "默认就是 ysgl.bot.cd/astrbot；不要填写 /api.php。",
+    "invisible": true
+  },
+  "cloud_api_key": {
+    "type": "string",
+    "default": "",
+    "secret": true,
+    "description": "🔑 云端 API Key",
+    "hint": "在网站注册并登录后，进入设置 → API Key 生成；只把 Key 填到这里。",
+    "invisible": true
+  },
+  "cloud_shop_effects_json": {
+    "type": "text",
+    "default": "{}",
+    "invisible": true,
+    "description": "云端商品效果内部缓存。"
+  },
+  "cloud_auto_sync": {
+    "type": "bool",
+    "default": true,
+    "description": "☁️ 自动同步云端目录",
+    "hint": "开启后定时拉取已发布的 Boss、商品、教程等；不会覆盖同名的本地自定义数据。",
+    "invisible": true
+  },
+  "cloud_sync_interval_minutes": {
+    "type": "int",
+    "default": 15,
+    "description": "☁️ 自动同步间隔（分钟）",
+    "slider": {
+      "min": 5,
+      "max": 1440,
+      "step": 5
+    },
+    "invisible": true
+  },
+  "cloud_timeout_seconds": {
+    "type": "int",
+    "default": 12,
+    "description": "☁️ 云端请求超时（秒）",
+    "slider": {
+      "min": 3,
+      "max": 60,
+      "step": 1
+    },
+    "invisible": true
+  },
+  "cloud_use_official_content": {
+    "type": "bool",
+    "default": true,
+    "description": "☁️ 使用网站管理员发布的官方内容",
+    "hint": "关闭后仍可同步你自己账号发布的内容。",
+    "invisible": true
+  },
+  "cloud_use_own_content": {
+    "type": "bool",
+    "default": true,
+    "description": "☁️ 使用当前 Key 对应账号发布的内容",
+    "hint": "这是网站“我的云端玩法”中的自定义 Boss、商品、教程等。",
+    "invisible": true
+  },
+  "cloud_use_community_content": {
+    "type": "bool",
+    "default": true,
+    "description": "☁️ 获取其他用户公开的社区玩法",
+    "hint": "开启后可同步其他网站用户公开发布的 Boss、商品、教程；不会读取未公开内容。",
+    "invisible": true
+  },
+  "cloud_sync_packages": {
+    "type": "bool",
+    "default": true,
+    "description": "☁️ 同步社区 JSON 数据包",
+    "hint": "开启后云端玩法页面会获取其他用户上传的自定义 JSON 数据包；任意未知字段只展示/缓存，不会自动执行。",
+    "invisible": true
+  },
+  "cloud_selected_package_nos": {
+    "type": "list",
+    "default": [],
+    "invisible": true,
+    "description": "☁️ 当前选择的公开 JSON 数据包编号",
+    "hint": "可在“☁️ 云端玩法”分区勾选多个公开 JSON；这里只保存编号，不执行任意代码。"
   }
 }
