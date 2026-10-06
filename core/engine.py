@@ -36,17 +36,17 @@ PET_SPECIES = ["小火龙", "月兔", "机械狐", "森之鹿", "星尘鸟", "�
 PERSONALITIES = ["勇敢", "胆小", "贪财", "幸运", "懒惰", "忠诚", "暴躁", "聪明"]
 
 SKILLS = {
-    "普攻": {"name":"普通攻击","type":"damage","power":1.0,"cost":0,"cooldown":0,"desc":"稳定的基础攻击。"},
-    "重击": {"name":"重击","type":"damage","power":1.65,"cost":8,"cooldown":6,"desc":"高伤害，但消耗体力。"},
-    "连斩": {"name":"连斩","type":"damage","power":1.25,"cost":10,"cooldown":9,"hits":2,"desc":"连续攻击两次。"},
-    "护盾": {"name":"守护屏障","type":"guard","power":0.35,"cost":6,"cooldown":12,"desc":"下一次受到怪物攻击时减伤。"},
-    "吸血": {"name":"猩红打击","type":"lifesteal","power":1.15,"cost":12,"cooldown":14,"heal":0.28,"desc":"造成伤害并恢复部分体力。"},
-    "火球": {"name":"火球术","type":"damage","power":1.8,"cost":14,"cooldown":10,"element":"火","desc":"火属性攻击。"},
-    "冰枪": {"name":"冰霜长枪","type":"damage","power":1.45,"cost":12,"cooldown":8,"element":"冰","slow":2,"desc":"冰属性攻击，有机会降低怪物攻击。"},
-    "毒刃": {"name":"淬毒之刃","type":"damage","power":1.35,"cost":9,"cooldown":7,"element":"毒","dot":18,"desc":"附加持续伤害。"},
-    "雷击": {"name":"落雷","type":"damage","power":2.05,"cost":18,"cooldown":16,"element":"雷","desc":"高爆发雷属性技能。"},
-    "火焰风暴": {"name":"火焰风暴","type":"aoe","power":1.55,"cost":22,"cooldown":18,"element":"火","aoe_ratio":0.85,"desc":"范围攻击，对群体怪物特别有效。"},
-    "雷霆震爆": {"name":"雷霆震爆","type":"aoe","power":1.7,"cost":26,"cooldown":22,"element":"雷","aoe_ratio":0.9,"desc":"范围雷击，拥有小概率震慑敌人。"},
+    "普攻": {"name":"普通攻击","type":"damage","power":1.0,"cost":0,"cooldown":0,"learn_level":1,"desc":"稳定的基础攻击。"},
+    "重击": {"name":"重击","type":"damage","power":1.65,"cost":8,"cooldown":6,"learn_level":1,"desc":"高伤害，但消耗体力。"},
+    "连斩": {"name":"连斩","type":"damage","power":1.25,"cost":10,"cooldown":9,"hits":2,"learn_level":3,"required_skill":"重击","desc":"连续攻击两次。"},
+    "护盾": {"name":"守护屏障","type":"guard","power":0.35,"cost":6,"cooldown":12,"learn_level":5,"desc":"下一次受到攻击时减伤。"},
+    "吸血": {"name":"猩红打击","type":"lifesteal","power":1.15,"cost":12,"cooldown":14,"learn_level":7,"required_skill":"护盾","heal":0.28,"desc":"造成伤害并恢复部分战斗生命。"},
+    "火球": {"name":"火球术","type":"damage","power":1.8,"cost":14,"cooldown":10,"learn_level":5,"element":"火","desc":"火属性攻击。"},
+    "冰枪": {"name":"冰霜长枪","type":"damage","power":1.45,"cost":12,"cooldown":8,"learn_level":7,"element":"冰","slow":2,"desc":"冰属性攻击，有机会降低怪物攻击。"},
+    "毒刃": {"name":"淬毒之刃","type":"damage","power":1.35,"cost":9,"cooldown":7,"learn_level":8,"required_skill":"连斩","element":"毒","dot":18,"desc":"附加持续伤害。"},
+    "雷击": {"name":"落雷","type":"damage","power":2.05,"cost":18,"cooldown":16,"learn_level":10,"element":"雷","desc":"高爆发雷属性技能。"},
+    "火焰风暴": {"name":"火焰风暴","type":"aoe","power":1.55,"cost":22,"cooldown":18,"learn_level":15,"required_skill":"火球","element":"火","aoe_ratio":0.85,"desc":"范围攻击，对群体怪物特别有效。"},
+    "雷霆震爆": {"name":"雷霆震爆","type":"aoe","power":1.7,"cost":26,"cooldown":22,"learn_level":18,"required_skill":"雷击","element":"雷","aoe_ratio":0.9,"desc":"范围雷击，拥有小概率震慑敌人。"},
 }
 
 MONSTER_TEMPLATES = {
@@ -88,6 +88,7 @@ ITEM_INFO = {
     "ice_core": ("冰霜核心", "冰属性怪物稀有材料。"),
     "lava_core": ("熔岩核心", "熔岩怪物稀有材料。"),
     "void_fragment": ("虚空碎片", "终局区域的稀有材料。"),
+    "feather": ("雷翼羽毛", "雷翼鹰掉落的稀有材料，可制作高阶装备。"),
 }
 
 ITEM_ALIASES = {
@@ -115,6 +116,16 @@ SHOP = {
     "revive_potion": ("复活药剂", 1800, "死亡时用于立即复活并恢复 50% 战斗生命"),
     "key": ("神秘钥匙", 1200, "探索遗迹时提高宝箱收益"),
     "energy_drink": ("能量饮料", 650, "恢复 50 体力并获得 100 经验"),
+}
+
+CRAFTING_RECIPES = {
+    "forest_blade": {"name":"猎影长刃","slot":"武器","rarity":"优秀","level":3,"attack":24,"defense":0,"explore_bonus":2,"revive_chance":0,"materials":{"wolf_fang":3,"wood":8,"ore":5},"desc":"由森林兽骨与精炼矿石锻成。"},
+    "slime_guard": {"name":"凝胶护甲","slot":"护甲","rarity":"优秀","level":4,"attack":0,"defense":30,"explore_bonus":1,"revive_chance":0,"materials":{"slime_core":5,"ore":10,"wood":4},"desc":"软韧核心可以吸收部分冲击。"},
+    "frost_boots": {"name":"霜痕战靴","slot":"鞋子","rarity":"稀有","level":8,"attack":8,"defense":24,"explore_bonus":6,"revive_chance":0,"materials":{"ice_core":2,"crystal":3,"wolf_fang":3},"desc":"冰原猎手常用的轻型战靴。"},
+    "lava_armor": {"name":"熔岩战铠","slot":"护甲","rarity":"史诗","level":12,"attack":12,"defense":62,"explore_bonus":4,"revive_chance":0,"materials":{"lava_core":3,"ore":24,"crystal":5},"desc":"熔岩核心维持着炽热护盾。"},
+    "thunder_blade": {"name":"雷翼断空刃","slot":"武器","rarity":"史诗","level":14,"attack":94,"defense":8,"explore_bonus":5,"revive_chance":0,"materials":{"feather":5,"crystal":8,"ore":20},"desc":"以雷翼羽毛导引高压电流。"},
+    "void_amulet": {"name":"虚空秘典","slot":"饰品","rarity":"传说","level":18,"attack":38,"defense":38,"explore_bonus":10,"revive_chance":0,"materials":{"void_fragment":2,"crystal":8,"key":2},"desc":"虚空领域中的稀有遗物。"},
+    "phoenix_amulet": {"name":"涅槃护符","slot":"饰品","rarity":"传说","level":20,"attack":20,"defense":25,"explore_bonus":4,"revive_chance":100,"materials":{"lava_core":3,"void_fragment":1,"crystal":10,"key":3},"desc":"一次性守护装备，死亡时自动触发并消耗。"},
 }
 
 ACHIEVEMENT_INFO = {
@@ -455,14 +466,24 @@ class WorldEngine:
             item_text = f"\n💎 发现稀有水晶！钻石 +{gems}"
             exp_gain += 150
         elif event_roll < 18 + rare_boost + fortune_boost:
-            item_id, item_name, qty = random.choice([
-                ("ore", "强化矿石", random.randint(1, 4)),
-                ("crystal", "强化水晶", 1),
-                ("key", "神秘钥匙", 1),
-            ])
-            self.db.add_item(group_id, user_id, item_id, item_name, qty)
-            item_text = f"\n🎁 获得：{item_name} ×{qty}"
-            exp_gain += 80
+            material_pool={
+                "黑森林":[("wood","冒险素材",(5,14)),("wolf_fang","狼牙",(1,3)),("slime_core","史莱姆核心",(1,2))],
+                "废弃矿洞":[("ore","强化矿石",(3,8)),("crystal","强化水晶",(0,2)),("key","神秘钥匙",(0,1))],
+                "黄沙荒漠":[("bone","完整骨片",(1,4)),("ore","强化矿石",(2,6)),("key","神秘钥匙",(0,1))],
+                "冰封山脉":[("ice_core","冰霜核心",(1,2)),("crystal","强化水晶",(1,3)),("wolf_fang","狼牙",(1,2))],
+                "恶魔城":[("ore","强化矿石",(4,10)),("crystal","强化水晶",(1,3)),("key","神秘钥匙",(1,2))],
+                "熔岩火山":[("lava_core","熔岩核心",(1,3)),("ore","强化矿石",(4,12)),("crystal","强化水晶",(1,3))],
+                "虚空领域":[("void_fragment","虚空碎片",(1,2)),("crystal","强化水晶",(2,5)),("key","神秘钥匙",(1,2))],
+            }
+            pool=material_pool.get(loc[0],[("ore","强化矿石",(1,4)),("wood","冒险素材",(3,8)),("key","神秘钥匙",(0,1))])
+            found=[]
+            for iid,iname,(lo,hi) in random.sample(pool,k=min(2,len(pool))):
+                qty=max(0,random.randint(lo,hi))
+                if qty:
+                    if player["profession"]=="收藏家" and random.random()<.5:qty+=1
+                    self.db.add_item(group_id,user_id,iid,iname,qty);found.append(f"{iname}×{qty}")
+            item_text="\n📦 发现材料宝箱！"+("、".join(found) if found else "但箱子是空的")
+            exp_gain+=80
         elif event_roll < danger_threshold:
             monster_base = float(self.cfg("explore_monster_chance_percent",group_id,16))
             row_group = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
@@ -480,11 +501,15 @@ class WorldEngine:
                 self.db.change_stamina(group_id, user_id, -damage)
                 item_text = f"\n🐺 遭遇危险！额外损失体力 {damage}"
                 coins_gain = int(coins_gain * 0.7)
-        elif event_roll < 31:
+        elif event_roll < 36:
             rarity, equip_item = self._random_equipment(loc[1], player["level"], equip["attack"])
             self.db.add_equipment(group_id, user_id, **equip_item, rarity=rarity)
-            item_text = f"\n⚔️ 发现装备：【{equip_item['name']}】 [{rarity}]"
-            exp_gain += 200
+            bonus_text = ""
+            if random.random() < 0.28:
+                iid,iname,qty=random.choice([("ore","强化矿石",random.randint(2,5)),("crystal","强化水晶",1),("key","神秘钥匙",1)])
+                self.db.add_item(group_id,user_id,iid,iname,qty); bonus_text=f"\n🎁 宝箱附赠：{iname}×{qty}"
+            item_text=f"\n🎁 发现装备宝箱！\n⚔️ 开出：【{equip_item['name']}】 [{rarity}]"+bonus_text
+            exp_gain += 220
         else:
             self.db.add_item(group_id, user_id, "wood", "冒险素材", random.randint(3, 12))
             item_text = f"\n🌿 收集了冒险素材。"
@@ -521,50 +546,174 @@ class WorldEngine:
             + (f"\n{achievement}" if achievement else "")
         , level_ups=level_ups, achievement=achievement)
 
+    def _skill_requirements_text(self, player, skill_id: str, owned: set[str] | None = None) -> str:
+        info = SKILLS.get(skill_id, {})
+        req_level = int(info.get("learn_level", 1) or 1)
+        parts = [f"Lv.{req_level}"]
+        if int(player["level"]) < req_level:
+            parts.append(f"还需 {req_level - int(player['level'])} 级")
+        required = str(info.get("required_skill") or "").strip()
+        if required and owned is not None and required not in owned:
+            parts.append(f"先学会【{required}】")
+        return " · ".join(parts)
+
     def skill_list(self, user_id: str, name: str = "冒险者") -> str:
         self.ensure_player("", user_id, name)
-        owned = {r["skill_id"]: r for r in self.db.get_skills(user_id)}
-        if "普攻" not in owned: self.db.set_skill(user_id, "普攻", 1, 1)
-        if "重击" not in owned: self.db.set_skill(user_id, "重击", 1, 0)
-        owned = {r["skill_id"]: r for r in self.db.get_skills(user_id)}
-        player=self.db.get_player("",user_id)
-        points=max(2,int(player["level"])//3+2)
-        lines=["✨【技能中心】", f"技能点：{max(0,points-len(owned))}/{points}", "", "📚 技能清单："]
-        for sid,info in SKILLS.items():
+        owned_rows = self.db.get_skills(user_id)
+        owned = {r["skill_id"]: r for r in owned_rows}
+        if "普攻" not in owned:
+            self.db.set_skill(user_id, "普攻", 1, 1)
+        if "重击" not in owned:
+            self.db.set_skill(user_id, "重击", 1, 0)
+        owned_rows = self.db.get_skills(user_id)
+        owned = {r["skill_id"]: r for r in owned_rows}
+        player = self.db.get_player("", user_id)
+        points = max(2, int(player["level"]) // 3 + 2)
+        remain = max(0, points - len(owned))
+        lines = ["✨【技能中心】", f"技能点：{remain}/{points}", "", "📚 技能清单："]
+        for sid, info in SKILLS.items():
+            req = self._skill_requirements_text(player, sid, set(owned))
             if sid in owned:
-                mark="⭐已装备" if owned[sid]["equipped"] else "✅已学习"
-                cd=self.db.skill_cooldown_remaining(user_id,sid)
-                lines.append(f"{mark}｜{sid} Lv.{owned[sid]['level']}｜❤️{info['cost']}｜CD {info['cooldown']}s｜{info['desc']}{'｜冷却 '+str(cd)+'s' if cd else ''}")
+                mark = "⭐已装备" if owned[sid]["equipped"] else "✅已学习"
+                cd = self.db.skill_cooldown_remaining(user_id, sid)
+                lines.append(f"{mark}｜{sid} Lv.{owned[sid]['level']}｜❤️{info['cost']}｜CD {info['cooldown']}s｜{info['desc']}｜学习条件 {req}{'｜冷却 '+str(cd)+'s' if cd else ''}")
             else:
-                lines.append(f"🔒未学习｜{sid}｜❤️{info['cost']}｜CD {info['cooldown']}s｜{info['desc']}")
-        equipped=[r["skill_id"] for r in owned.values() if r["equipped"]]
-        lines += ["", f"🧩 当前技能栏（最多4个）：{'、'.join(equipped) if equipped else '未配置'}", "", "操作：", "`/技能学习 技能名`｜学习", "`/技能装备 技能名`｜装备/卸下", "`/技能使用 技能名`｜对当前怪物使用", "`/攻击怪物`｜使用普通攻击", "", "🔗 羁绊示例：火球+重击、冰枪+雷击、毒刃+连斩。装备组合后可能获得额外效果。"]
+                lines.append(f"🔒未学习｜{sid}｜❤️{info['cost']}｜CD {info['cooldown']}s｜{info['desc']}｜学习条件 {req}")
+        equipped = [r["skill_id"] for r in owned_rows if r["equipped"]]
+        lines += [
+            "", f"🧩 当前技能栏（最多 {int(self.cfg('skill_slot_limit', None, 4))} 个）：{'、'.join(equipped) if equipped else '未配置'}",
+            "", "操作：",
+            "`/技能学习 技能名`｜学习",
+            "`/技能装备 技能名`｜装备/卸下",
+            "`/技能使用`｜自动选择当前可用技能",
+            "`/技能使用 技能名`｜指定技能",
+            "`/攻击怪物`｜使用普通攻击",
+            "", "🔗 羁绊示例：火球+重击、冰枪+雷击、毒刃+连斩。",
+        ]
         return "\n".join(lines)
 
     def equip_skill(self, user_id: str, skill_id: str, name: str) -> str:
-        self.ensure_player("",user_id,name)
-        if skill_id not in SKILLS: return "❌ 没有这个技能。输入 `/技能` 查看技能清单。"
-        owned={r["skill_id"] for r in self.db.get_skills(user_id)}
-        if skill_id not in owned: return "❌ 你还没有这个技能，请先使用 `/技能学习 技能名`。"
-        current=[r for r in self.db.get_skills(user_id) if r["equipped"]]
-        if not any(r["skill_id"]==skill_id for r in current) and len(current)>=int(self.cfg("skill_slot_limit", None, 4)):
+        self.ensure_player("", user_id, name)
+        if skill_id not in SKILLS:
+            return "❌ 没有这个技能。输入 `/技能` 查看技能清单。"
+        owned = {r["skill_id"] for r in self.db.get_skills(user_id)}
+        if skill_id not in owned:
+            return "❌ 你还没有这个技能，请先使用 `/技能学习 技能名`。"
+        current = [r for r in self.db.get_skills(user_id) if r["equipped"]]
+        if not any(r["skill_id"] == skill_id for r in current) and len(current) >= int(self.cfg("skill_slot_limit", None, 4)):
             return "❌ 技能栏已达到上限。先卸下一个技能：`/技能卸下 技能名`。"
-        self.db.set_skill_equipped(user_id,skill_id,0 if any(r["skill_id"]==skill_id for r in current) else 1)
-        return self.skill_list(user_id,name)
+        self.db.set_skill_equipped(user_id, skill_id, 0 if any(r["skill_id"] == skill_id for r in current) else 1)
+        return self.skill_list(user_id, name)
 
-    def unequip_skill(self,user_id:str,skill_id:str,name:str)->str:
-        self.db.set_skill_equipped(user_id,skill_id,0)
-        return f"🧩 已卸下【{skill_id}】。\n\n"+self.skill_list(user_id,name)
+    def unequip_skill(self, user_id: str, skill_id: str, name: str) -> str:
+        self.db.set_skill_equipped(user_id, skill_id, 0)
+        return f"🧩 已卸下【{skill_id}】。\n\n" + self.skill_list(user_id, name)
 
-    def learn_skill(self,user_id:str,skill_id:str,name:str)->str:
-        player,_=self.ensure_player("",user_id,name)
-        if skill_id not in SKILLS: return "❌ 没有这个技能。"
-        if any(r["skill_id"]==skill_id for r in self.db.get_skills(user_id)): return "你已经学会这个技能了。"
-        # Skill points = floor(level/5)+1, learned count must stay within points.
-        available=max(2,int(player["level"])//3+2)-len(self.db.get_skills(user_id))
-        if available<=0: return f"❌ 技能点不足。你当前技能点上限为 {max(2,int(player['level'])//3+2)}，输入 `/我的` 查看等级。"
-        self.db.set_skill(user_id,skill_id,1,0)
-        return f"📘 学会技能【{skill_id}】！\n{SKILLS[skill_id]['desc']}\n输入 `/技能装备 {skill_id}` 放入技能栏。"
+    def learn_skill(self, user_id: str, skill_id: str, name: str) -> str:
+        player, _ = self.ensure_player("", user_id, name)
+        if skill_id not in SKILLS:
+            return "❌ 没有这个技能。输入 `/技能` 查看可学习技能。"
+        if skill_id == "普攻":
+            return "🗡️ 普攻是基础招式，已自动拥有，无需学习。"
+        if any(r["skill_id"] == skill_id for r in self.db.get_skills(user_id)):
+            return "✅ 你已经学会这个技能了。"
+        info = SKILLS[skill_id]
+        req_level = int(info.get("learn_level", 1) or 1)
+        if int(player["level"]) < req_level:
+            return f"🔒 暂时无法学习【{skill_id}】。需要 Lv.{req_level}，你当前 Lv.{player['level']}。\n👉 先通过 `/任务`、`/探索`、`/小游戏` 或战斗获取 EXP 升级。"
+        required = str(info.get("required_skill") or "").strip()
+        owned = {r["skill_id"] for r in self.db.get_skills(user_id)}
+        if required and required not in owned:
+            return f"🔒 学习【{skill_id}】前，需要先学习【{required}】。\n👉 输入 `/技能学习 {required}`。"
+        max_points = max(2, int(player["level"]) // 3 + 2)
+        available = max_points - len(owned)
+        if available <= 0:
+            return f"❌ 技能点不足。当前技能点上限 {max_points}，已占用 {len(owned)}。\n👉 升级后会获得新的技能点，输入 `/技能` 查看。"
+        self.db.set_skill(user_id, skill_id, 1, 0)
+        return f"📘 学会技能【{skill_id}】！\n{info['desc']}\n👉 想在决斗中使用，先输入 `/技能装备 {skill_id}`。"
+
+    def _crafting_recipes(self, group_id: str) -> dict[str, dict[str, Any]]:
+        recipes = {k: dict(v) for k,v in CRAFTING_RECIPES.items()}
+        cloud = self.json_cfg("cloud_crafting_recipe_json", group_id)
+        local = self.json_cfg("crafting_recipe_json", group_id)
+        custom = {**cloud, **local}
+        for rid, value in custom.items():
+            if isinstance(value, dict) and value.get("name") and isinstance(value.get("materials"), dict):
+                merged = dict(recipes.get(str(rid), {})); merged.update(value)
+                try:
+                    merged["level"] = max(1,int(merged.get("level",1) or 1))
+                    merged["materials"] = {str(k):max(1,int(v)) for k,v in merged["materials"].items()}
+                    recipes[str(rid)] = merged
+                except Exception: continue
+        return recipes
+
+    def crafting_text(self, group_id: str, user_id: str, name: str) -> str:
+        if not bool(self.cfg("crafting_enabled", group_id, True)): return "🛠️ 管理员已关闭装备合成系统。"
+        player,_ = self.ensure_player(group_id,user_id,name)
+        lines=["🛠️ 【装备合成台】","材料足够且达到等级即可合成："]
+        for rid,r in self._crafting_recipes(group_id).items():
+            mats=" + ".join(f"{ITEM_INFO.get(k,(k,''))[0]}×{v}" for k,v in r["materials"].items())
+            lock=f"🔒 Lv.{r.get('level',1)}" if int(player['level'])<int(r.get('level',1)) else "✅可制作"
+            line=f"{rid}｜{r['name']} [{r.get('rarity','普通')}]｜{lock}｜⚔️{r.get('attack',0)} 🛡️{r.get('defense',0)} 🗺️+{r.get('explore_bonus',0)}%"
+            if int(r.get('revive_chance',0) or 0): line += f"｜🕊️死亡触发{int(r['revive_chance'])}%"
+            lines += [line, f"  材料：{mats}"]
+        lines.append("\n用法：/合成 装备ID [数量]｜/自动合成 [数量]｜/拆解 装备ID")
+        return "\n".join(lines)
+
+    def _can_craft(self, group_id: str, user_id: str, recipe: dict[str,Any], qty:int) -> tuple[bool,str]:
+        p=self.db.get_player("__GLOBAL_USER__",user_id)
+        if not p:return False,"玩家不存在。"
+        need_level=int(recipe.get('level',1) or 1)
+        if int(p['level'])<need_level:return False,f"需要 Lv.{need_level}，你当前 Lv.{p['level']}。先 `/探索`、`/任务` 或战斗升级。"
+        for iid,amount in recipe.get('materials',{}).items():
+            need=int(amount)*qty; have=self.db.count_item(group_id,user_id,str(iid))
+            if have<need:
+                return False,f"缺少 {ITEM_INFO.get(str(iid),(str(iid),''))[0]} ×{need-have}（当前 {have}/{need}）。"
+        return True,""
+
+    def craft_equipment(self, group_id: str, user_id: str, name: str, recipe_id: str, qty:int=1) -> Result:
+        if not bool(self.cfg("crafting_enabled",group_id,True)):return Result("🛠️ 管理员已关闭装备合成系统。")
+        self.ensure_player(group_id,user_id,name); recipe=self._crafting_recipes(group_id).get(str(recipe_id))
+        if not recipe:return Result("❌ 没有这个合成配方。输入 `/合成列表` 查看。")
+        qty=max(1,min(int(self.cfg('crafting_max_batch',group_id,5) or 5),int(qty)))
+        ok,reason=self._can_craft(group_id,user_id,recipe,qty)
+        if not ok:return Result(f"❌ 无法合成【{recipe['name']}】：{reason}")
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        with raw.transaction() as conn:
+            for iid,amount in recipe['materials'].items():
+                need=int(amount)*qty; row=conn.execute("SELECT qty FROM inventory WHERE group_id=? AND user_id=? AND item_id=?",("__GLOBAL_USER__",user_id,str(iid))).fetchone()
+                if not row or int(row['qty'])<need: raise ValueError('material shortage')
+                conn.execute("UPDATE inventory SET qty=qty-? WHERE group_id=? AND user_id=? AND item_id=?",(need,"__GLOBAL_USER__",user_id,str(iid)))
+            for _ in range(qty):
+                raw.add_equipment("__GLOBAL_USER__",user_id,recipe['name'],recipe['slot'],recipe.get('rarity','普通'),int(recipe.get('level',1)),int(recipe.get('attack',0)),int(recipe.get('defense',0)),int(recipe.get('explore_bonus',0)),False,int(recipe.get('revive_chance',0) or 0))
+        mats="、".join(f"{ITEM_INFO.get(k,(k,''))[0]}×{int(v)*qty}" for k,v in recipe['materials'].items())
+        return Result(f"🛠️ 合成成功！\n⚔️【{recipe['name']}】×{qty} [{recipe.get('rarity','普通')}]\n📦 消耗：{mats}\n💡 {recipe.get('desc','')}\n👉 `/装备` 查看，`/穿戴 装备ID` 使用。")
+
+    def auto_craft_equipment(self, group_id: str, user_id: str, name: str, qty:int=1) -> Result:
+        if not bool(self.cfg('crafting_auto_enabled',group_id,True)):return Result("🛠️ 自动合成未开启。请手动使用 `/合成 装备ID`。" )
+        p,_=self.ensure_player(group_id,user_id,name); recipes=self._crafting_recipes(group_id); rank={r:i for i,r in enumerate(RARITY_ORDER)}; candidates=[]
+        for rid,r in recipes.items():
+            if int(p['level'])<int(r.get('level',1) or 1):continue
+            possible=min([self.db.count_item(group_id,user_id,i)//max(1,int(v)) for i,v in r.get('materials',{}).items()] or [0])
+            if possible>0:candidates.append((rank.get(str(r.get('rarity','普通')),0),int(r.get('level',1)),int(r.get('attack',0))+int(r.get('defense',0)),possible,rid))
+        if not candidates:return Result("🛠️ 目前没有材料足够且等级达标的装备可自动合成。\n👉 `/合成列表` 查看材料需求。")
+        candidates.sort(reverse=True); rid=candidates[0][-1]; possible=candidates[0][-2]
+        qty=max(1,min(int(self.cfg('crafting_max_batch',group_id,5) or 5),int(qty),possible))
+        return self.craft_equipment(group_id,user_id,name,rid,qty)
+
+    def disassemble_equipment(self, group_id: str, user_id: str, equipment_id:int, name:str) -> Result:
+        if not bool(self.cfg('crafting_enabled',group_id,True)):return Result("🛠️ 管理员已关闭装备合成系统。")
+        self.ensure_player(group_id,user_id,name); eq=self.db.fetchone("SELECT * FROM equipment WHERE id=? AND group_id='__GLOBAL_USER__' AND user_id=?",(equipment_id,user_id))
+        if not eq:return Result("❌ 找不到这件装备。")
+        if int(eq['equipped']):return Result("❌ 这件装备正在穿戴，请先换下再拆解。")
+        rank=RARITY_ORDER.index(str(eq['rarity']))+1 if str(eq['rarity']) in RARITY_ORDER else 1
+        ore=max(1,int(eq['level'])*rank); crystal=max(0,(rank-2)*max(1,int(eq['level'])//4)); wood=max(1,rank*2)
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        with raw.transaction() as conn:
+            conn.execute("DELETE FROM equipment WHERE id=? AND group_id='__GLOBAL_USER__' AND user_id=?",(equipment_id,user_id))
+            for iid,iname,qty in (("ore","强化矿石",ore),("crystal","强化水晶",crystal),("wood","冒险素材",wood)):
+                if qty:conn.execute("INSERT INTO inventory(group_id,user_id,item_id,item_name,qty) VALUES(?,?,?,?,?) ON CONFLICT(group_id,user_id,item_id) DO UPDATE SET qty=inventory.qty+excluded.qty",("__GLOBAL_USER__",user_id,iid,iname,qty))
+        return Result(f"♻️ 拆解【{eq['name']}】成功！\n⛏️ 强化矿石 +{ore}\n💎 强化水晶 +{crystal}\n🌿 冒险素材 +{wood}")
 
     def _monster_templates(self,group_id:str)->dict:
         data=dict(MONSTER_TEMPLATES)
@@ -1600,13 +1749,42 @@ class WorldEngine:
             starter=p1["user_id"] if p1["speed"]>p2["speed"] else (p2["user_id"] if p2["speed"]>p1["speed"] else random.choice([p1["user_id"],p2["user_id"]]))
             battle_id=self.db.create_duel_battle({**p1,"group_id":c["group_id"],"origin":c["session_origin"]},{**p2,"group_id":group_id,"origin":origin},starter,now+int(self.cfg("duel_turn_timeout_seconds",group_id,120)))
             b=self.db.get_duel(battle_id); first=b["p1_name"] if b["turn_user_id"]==b["p1_user_id"] else b["p2_name"]
-            text=f"⚔️【跨群决斗 #{battle_id}】匹配成功！\n{b['p1_name']} VS {b['p2_name']}\n\n🔥 {first} 先手。\n使用 `/决斗攻击`、`/决斗技能 火球` 或 `/决斗防御`。"
+            text=f"⚔️【跨群决斗 #{battle_id}】匹配成功！\n{b['p1_name']} VS {b['p2_name']}\n\n🔥 {first} 先手。\n使用 `/决斗攻击`、`/决斗技能` 或 `/决斗防御`；`/决斗技能` 会自动选择可用技能。"
             return text
         self.db.enqueue_duel(user_id,group_id,origin,name,rating,now+int(self.cfg("duel_queue_timeout_seconds",group_id,180)))
         return f"🔎 已进入跨群决斗匹配队列！\nUID：{p['player_uid']}｜积分：{rating}\n匹配范围：±{int(self.cfg('duel_match_rating_range',group_id,200))}\n匹配成功后机器人会通知你。"
 
     def _duel_side(self,b,user_id):
         return "p1" if b["p1_user_id"]==user_id else "p2"
+
+    def _duel_equipped_skills(self, user_id: str) -> list[str]:
+        rows = self.db.get_skills(user_id)
+        return [str(r["skill_id"]) for r in rows if r["equipped"] and str(r["skill_id"]) in SKILLS]
+
+    def _pick_duel_skill(self, user_id: str, player=None) -> str:
+        """自动选一个当前技能栏中可用且体力负担合理的技能；没有合适技能时回退普攻。"""
+        if player is None:
+            player = self.db.get_player("__GLOBAL_USER__", user_id)
+        stamina = int(player["stamina"] if player else 100)
+        candidates = []
+        for sid in self._duel_equipped_skills(user_id):
+            info = SKILLS.get(sid)
+            if not info: continue
+            cost = int(info.get("cost", 0) or 0)
+            if cost > stamina: continue
+            if sid != "普攻" and self.db.skill_cooldown_remaining(user_id, sid): continue
+            power = float(info.get("power", 1.0) or 1.0)
+            if int(info.get("hits", 1) or 1) > 1: power *= float(info.get("hits", 1)) * 0.9
+            score = power / (1.0 + cost * 0.04) + random.random() * 0.08
+            if sid == "普攻": score *= 0.72
+            candidates.append((score, sid))
+        return max(candidates, default=(0.0, "普攻"))[1]
+
+    def _duel_action_help(self, user_id: str) -> str:
+        equipped = self._duel_equipped_skills(user_id)
+        usable = self._pick_duel_skill(user_id)
+        skills = "、".join(equipped) if equipped else "未装备技能"
+        return f"🎮 你的回合：`/决斗攻击` 普攻｜`/决斗技能` 自动选技能｜`/决斗防御`。当前技能栏：{skills}。推荐：`/决斗技能`（当前优先 {usable}）。"
 
     def duel_status(self,user_id:str)->str:
         b=self.db.get_active_duel_for_user(user_id)
@@ -1615,7 +1793,7 @@ class WorldEngine:
             return "⏳ 你正在匹配中。" if q else "⚔️ 当前没有进行中的决斗。"
         me=self._duel_side(b,user_id); op="p2" if me=="p1" else "p1"
         turn="轮到你" if b["turn_user_id"]==user_id else f"等待 {b[op+'_name']} 行动"
-        return f"⚔️【决斗 #{b['id']}】\n你：{b[me+'_name']} ❤️ {b[me+'_hp']}/{b[me+'_max_hp']}\n对手：{b[op+'_name']} ❤️ {b[op+'_hp']}/{b[op+'_max_hp']}\n回合：{b['round_no']}｜{turn}\n\n操作：/决斗攻击｜/决斗技能 技能名｜/决斗防御"
+        return f"⚔️【决斗 #{b['id']}】\n你：{b[me+'_name']} ❤️ {b[me+'_hp']}/{b[me+'_max_hp']} ｜ ⚡{b[me+'_stamina']}/100\n对手：{b[op+'_name']} ❤️ {b[op+'_hp']}/{b[op+'_max_hp']}\n回合：{b['round_no']}｜{turn}\n\n{self._duel_action_help(user_id)}"
 
     def duel_action(self,user_id:str,action:str="attack",skill_id:str="") -> tuple[str,dict|None]:
         b=self.db.get_active_duel_for_user(user_id)
@@ -1640,27 +1818,40 @@ class WorldEngine:
             })
             return f"🛡️ {b[me+'_name']} 进入防御姿态，恢复 8 战斗体力。\n➡️ 下一回合：{b[op+'_name']}",self.db.get_duel(b["id"])
 
-        action_name="普通攻击"; sk=None; ms_before=ms
+        action_name="普通攻击"; sk=SKILLS["普攻"]
         if action=="skill":
-            sk=SKILLS.get(skill_id)
-            if not sk: return "❌ 未找到这个技能。输入 `/技能` 查看。",None
-            if skill_id!="普攻" and not any(r["skill_id"]==skill_id and r["equipped"] for r in self.db.get_skills(user_id)):
-                return "❌ 这个技能不在你的技能栏。先使用 `/技能装备 技能名`。",None
+            requested=str(skill_id or "").strip()
+            chosen=self._pick_duel_skill(user_id) if not requested else requested
+            if not chosen:
+                chosen="普攻"
+            sk=SKILLS.get(chosen)
+            if not sk:
+                return "❌ 未找到这个技能。输入 `/技能` 查看。",None
+            if chosen!="普攻" and not any(r["skill_id"]==chosen and r["equipped"] for r in self.db.get_skills(user_id)):
+                return f"❌【{chosen}】不在你的技能栏。先输入 `/技能` 查看并使用 `/技能装备 {chosen}`。",None
             cost=int(sk.get("cost",0))
-            if ms<cost: return f"❤️ 战斗体力不足，需要 {cost}，当前 {ms}。",None
-            cd=self.db.skill_cooldown_remaining(user_id,skill_id)
-            if cd:return f"⏳ 技能冷却中，还需 {cd} 秒。",None
-            self.db.set_skill_cooldown(user_id,skill_id,int(sk.get("cooldown",0)))
-            ms-=cost
+            if ms<cost:
+                if not requested:
+                    sk=SKILLS["普攻"]; chosen="普攻"; cost=0
+                else:
+                    return f"❤️ 战斗体力不足，【{chosen}】需要 {cost}，当前 {ms}。\n👉 使用 `/决斗技能` 自动选择，或直接 `/决斗攻击`。",None
+            cd=self.db.skill_cooldown_remaining(user_id,chosen) if chosen!="普攻" else 0
+            if cd:
+                if not requested:
+                    sk=SKILLS["普攻"]; chosen="普攻"; cost=0
+                else:
+                    return f"⏳【{chosen}】冷却中，还需 {cd} 秒。\n👉 使用 `/决斗技能` 可自动换成其他可用技能。",None
+            if chosen!="普攻":
+                self.db.set_skill_cooldown(user_id,chosen,int(sk.get("cooldown",0)))
+                ms-=cost
             action_name=sk["name"]
             if sk.get("type")=="guard":
                 self.db.update_duel(b["id"],**{
                     me+"_guard":1, me+"_stamina":min(100,ms),
                     "turn_user_id":b[op+"_user_id"], "round_no":int(b["round_no"])+1,
-                    "expires_at":now+max(30,timeout),
-                    "last_action_text":f"{b[me+'_name']} 使用 {action_name}",
+                    "expires_at":now+max(30,timeout), "last_action_text":f"{b[me+'_name']} 使用 {action_name}",
                 })
-                return f"🛡️ {b[me+'_name']} 使用【{action_name}】进入强化防御！\n❤️ 战斗体力：{ms}/100\n➡️ 下一回合：{b[op+'_name']}",self.db.get_duel(b["id"])
+                return f"🛡️ {b[me+'_name']} 使用【{action_name}】进入强化防御！\n⚡ 战斗体力：{ms}/100\n➡️ 下一回合：{b[op+'_name']}\n\n{self._duel_action_help(b[op+'_user_id'])}",self.db.get_duel(b["id"])
         else:
             sk=SKILLS["普攻"]
 
@@ -1698,17 +1889,21 @@ class WorldEngine:
         if oh<=0:
             winner=user_id; loser=b[op+"_user_id"]
             fields.update(state="finished",winner_user_id=winner,loser_user_id=loser,turn_user_id=None,expires_at=0,
-                          result_json=json.dumps({"result":"win","damage":damage,"action":action_name},ensure_ascii=False))
+                          result_json=json.dumps({"result":"win","winner_user_id":winner,"loser_user_id":loser,"damage":damage,"action":action_name},ensure_ascii=False))
             self.db.update_duel(b["id"],**fields)
             loser_group=b[op+"_group_id"]
             death_text=self._finish_duel_stats(winner,loser,loser_group)
-            return f"🏆【决斗结束】 {b[me+'_name']} 获胜！\n⚔️ {action_name} 造成 {damage} 伤害。" + (f"\n📌 {extra_text}" if extra_text else "") + f"\n{death_text}\n💬 双方可在 {int(self.cfg('duel_message_window_seconds',None,300))} 秒内使用 `/战后留言 内容` 给对手留言。",self.db.get_duel(b["id"])
+            final_row=self.db.get_duel(b["id"])
+            result={"result":"win","winner_user_id":winner,"loser_user_id":loser,"damage":damage,"action":action_name,"loser_death_text":death_text}
+            self.db.update_duel(b["id"],result_json=json.dumps(result,ensure_ascii=False))
+            neutral=f"\n💀 败者【{b[op+'_name']}】已进入死亡/复活处理。"
+            return f"🏆【决斗结束】 {b[me+'_name']} 获胜！\n⚔️ {action_name} 造成 {damage} 伤害。" + (f"\n📌 {extra_text}" if extra_text else "") + neutral + f"\n💬 双方可在 {int(self.cfg('duel_message_window_seconds',None,300))} 秒内使用 `/战后留言 内容` 给对手留言。",self.db.get_duel(b["id"])
 
         fields.update(turn_user_id=b[op+"_user_id"],round_no=int(b["round_no"])+1,expires_at=now+max(30,timeout))
         self.db.update_duel(b["id"],**fields)
         nb=self.db.get_duel(b["id"])
         summary=(f"\n📌 {extra_text}" if extra_text else "")
-        return f"⚔️ {b[me+'_name']} 使用【{action_name}】造成 {damage} 伤害！{summary}\n❤️ {b[op+'_name']}：{oh}/{b[op+'_max_hp']}\n❤️ 你的战斗生命：{mh_after}/{b[me+'_max_hp']}\n➡️ 下一回合：{b[op+'_name']}",nb
+        return f"⚔️ {b[me+'_name']} 使用【{action_name}】造成 {damage} 伤害！{summary}\n❤️ {b[op+'_name']}：{oh}/{b[op+'_max_hp']}\n❤️ {b[me+'_name']}：{mh_after}/{b[me+'_max_hp']}\n➡️ 下一回合：{b[op+'_name']}\n{self._duel_action_help(b[op+'_user_id'])}",nb
 
     def _finish_duel_draw(self,b):
         for uid in (b["p1_user_id"],b["p2_user_id"]):
@@ -1722,7 +1917,7 @@ class WorldEngine:
         k=int(self.cfg("duel_rating_delta",None,25))
         winner_group=str(a["last_combat_group_id"] or loser_group_id)
         self.db.raw.set_global_player_fields(winner,{"battle_wins":int(a["battle_wins"])+1,"battle_kills":int(a["battle_kills"])+1,"pvp_rating":int(a["pvp_rating"])+k,"pvp_streak":int(a["pvp_streak"])+1,"last_combat_group_id":winner_group,"last_combat_at":utc_ts_iso()})
-        self.db.raw.set_global_player_fields(loser,{"battle_losses":int(d["battle_losses"])+1,"battle_deaths":int(d["battle_deaths"])+1,"pvp_rating":max(0,int(d["pvp_rating"])-k),"pvp_streak":0,"hp":0,"death_state":0,"respawn_at":0,"last_combat_group_id":loser_group_id,"last_combat_at":utc_ts_iso()})
+        self.db.raw.set_global_player_fields(loser,{"battle_losses":int(d["battle_losses"])+1,"battle_deaths":int(d["battle_deaths"])+1,"pvp_rating":max(0,int(d["pvp_rating"])-k),"pvp_streak":0,"hp":0,"last_combat_group_id":loser_group_id,"last_combat_at":utc_ts_iso()})
         return self._handle_death(loser_group_id,loser,"跨群决斗失败")
 
     def duel_message(self,user_id:str,message:str)->tuple[str,dict|None,int|None]:
@@ -1736,6 +1931,12 @@ class WorldEngine:
     def _handle_death(self, group_id: str, user_id: str, reason: str = "战斗") -> str:
         p=self.db.get_player("__GLOBAL_USER__",user_id)
         if not p:return ""
+        revive_eq=self.db.fetchone("SELECT * FROM equipment WHERE group_id='__GLOBAL_USER__' AND user_id=? AND equipped=1 AND revive_chance>0 ORDER BY revive_chance DESC, id ASC LIMIT 1",(user_id,))
+        if revive_eq and random.random()*100 < int(revive_eq["revive_chance"]):
+            hp=max(1,int(int(p["max_hp"])*float(self.cfg("revive_equipment_hp_percent",group_id,0.35))))
+            self.db.raw.set_global_player_fields(user_id,{"hp":hp,"death_state":0,"respawn_at":0,"revive_count":int(p["revive_count"])+1,"last_combat_group_id":group_id,"last_combat_at":utc_ts_iso()})
+            self.db.execute("DELETE FROM equipment WHERE id=? AND group_id='__GLOBAL_USER__' AND user_id=?",(int(revive_eq["id"]),user_id))
+            return f"🕊️【涅槃触发】你因{reason}本应倒下，但【{revive_eq['name']}】救了你！\n❤️ 立即恢复：{hp}/{p['max_hp']}\n♻️ 该护符已消耗。"
         now=utc_ts()
         self.db.raw.set_global_player_fields(user_id,{
             "hp":0,"death_state":1,"respawn_at":0,

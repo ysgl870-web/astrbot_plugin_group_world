@@ -175,6 +175,7 @@ class Database:
             attack INTEGER NOT NULL DEFAULT 0,
             defense INTEGER NOT NULL DEFAULT 0,
             explore_bonus INTEGER NOT NULL DEFAULT 0,
+            revive_chance INTEGER NOT NULL DEFAULT 0,
             equipped INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
@@ -323,12 +324,65 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_duel_active_p2 ON duel_battles(p2_user_id,state);
         CREATE INDEX IF NOT EXISTS idx_duel_queue_rating ON duel_queue(status,rating,joined_at);
 
+        CREATE TABLE IF NOT EXISTS duel_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            battle_id INTEGER NOT NULL,
+            recipient_user_id TEXT NOT NULL,
+            group_id TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL,
+            mention_user_id TEXT NOT NULL DEFAULT '',
+            dedupe_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            delivered INTEGER NOT NULL DEFAULT 0,
+            delivered_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_duel_notifications_due ON duel_notifications(delivered,id);
+
         CREATE TABLE IF NOT EXISTS duel_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             battle_id INTEGER NOT NULL, sender_user_id TEXT NOT NULL, recipient_user_id TEXT NOT NULL,
             message TEXT NOT NULL, created_at TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_duel_messages_recipient ON duel_messages(recipient_user_id,created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS group_broadcasts (
+            group_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            message TEXT NOT NULL DEFAULT '',
+            interval_minutes INTEGER NOT NULL DEFAULT 60,
+            next_send_at INTEGER NOT NULL DEFAULT 0,
+            last_sent_at INTEGER NOT NULL DEFAULT 0,
+            total_sent INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_broadcast_due ON group_broadcasts(enabled,next_send_at);
+
+        CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '循环群发',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            message TEXT NOT NULL DEFAULT '',
+            group_interval_seconds INTEGER NOT NULL DEFAULT 1,
+            loop_interval_minutes INTEGER NOT NULL DEFAULT 1,
+            next_run_at INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_started_at INTEGER NOT NULL DEFAULT 0,
+            last_finished_at INTEGER NOT NULL DEFAULT 0,
+            total_cycles INTEGER NOT NULL DEFAULT 0,
+            total_sent INTEGER NOT NULL DEFAULT 0,
+            total_failed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_broadcast_campaign_due ON broadcast_campaigns(enabled,next_run_at);
+
+        CREATE TABLE IF NOT EXISTS broadcast_campaign_targets (
+            campaign_id INTEGER NOT NULL,
+            group_id TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (campaign_id, group_id),
+            FOREIGN KEY (campaign_id) REFERENCES broadcast_campaigns(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_broadcast_campaign_targets_campaign ON broadcast_campaign_targets(campaign_id,sort_order);
 
         CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
         CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
@@ -427,6 +481,9 @@ class Database:
             for field, sql in migrations.items():
                 if field not in existing:
                     self.conn.execute(sql)
+            equipment_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(equipment)").fetchall()}
+            if "revive_chance" not in equipment_existing:
+                self.conn.execute("ALTER TABLE equipment ADD COLUMN revive_chance INTEGER NOT NULL DEFAULT 0")
             monster_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(monster_encounters)").fetchall()}
             if "skills_json" not in monster_existing:
                 self.conn.execute("ALTER TABLE monster_encounters ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'")
@@ -861,6 +918,7 @@ class Database:
         defense: int,
         explore_bonus: int,
         equipped: bool = False,
+        revive_chance: int = 0,
     ) -> int:
         with self.transaction() as conn:
             if equipped:
@@ -869,7 +927,7 @@ class Database:
                     (group_id, user_id, slot),
                 )
             cur = conn.execute(
-                "INSERT INTO equipment(group_id,user_id,name,slot,rarity,level,attack,defense,explore_bonus,equipped,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO equipment(group_id,user_id,name,slot,rarity,level,attack,defense,explore_bonus,revive_chance,equipped,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     group_id,
                     user_id,
@@ -880,6 +938,7 @@ class Database:
                     attack,
                     defense,
                     explore_bonus,
+                    max(0,min(100,int(revive_chance or 0))),
                     1 if equipped else 0,
                     utc_now(),
                 ),
@@ -894,10 +953,10 @@ class Database:
 
     def get_equipped_stats(self, group_id: str, user_id: str) -> dict[str, int]:
         row = self.fetchone(
-            "SELECT COALESCE(SUM(attack),0) attack, COALESCE(SUM(defense),0) defense, COALESCE(SUM(explore_bonus),0) explore_bonus FROM equipment WHERE group_id=? AND user_id=? AND equipped=1",
+            "SELECT COALESCE(SUM(attack),0) attack, COALESCE(SUM(defense),0) defense, COALESCE(SUM(explore_bonus),0) explore_bonus, COALESCE(SUM(revive_chance),0) revive_chance FROM equipment WHERE group_id=? AND user_id=? AND equipped=1",
             (group_id, user_id),
         )
-        return {"attack": int(row["attack"]), "defense": int(row["defense"]), "explore_bonus": int(row["explore_bonus"])}
+        return {"attack": int(row["attack"]), "defense": int(row["defense"]), "explore_bonus": int(row["explore_bonus"]), "revive_chance": int(row["revive_chance"])}
 
     def get_today_key(self) -> str:
         return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -1613,7 +1672,7 @@ class Database:
         return self.fetchone("SELECT * FROM duel_battles WHERE id=?", (int(battle_id),))
 
     def update_duel(self, battle_id: int, **fields: Any) -> None:
-        allowed={'state','turn_user_id','round_no','p1_hp','p2_hp','p1_guard','p2_guard','p1_stamina','p2_stamina','updated_at','expires_at','winner_user_id','loser_user_id','result_json','last_action_text'}
+        allowed={'state','turn_user_id','round_no','p1_hp','p2_hp','p1_guard','p2_guard','p1_stamina','p2_stamina','p1_group_id','p1_origin','p2_group_id','p2_origin','updated_at','expires_at','winner_user_id','loser_user_id','result_json','last_action_text'}
         clean={k:v for k,v in fields.items() if k in allowed}
         if clean:
             clean.setdefault('updated_at',utc_now())
@@ -1630,6 +1689,130 @@ class Database:
 
     def get_due_respawns(self, now_ts: int, limit: int=100) -> list[sqlite3.Row]:
         return self.fetchall("SELECT * FROM players WHERE group_id='__GLOBAL_USER__' AND death_state=1 AND respawn_at>0 AND respawn_at<=? ORDER BY respawn_at ASC LIMIT ?", (int(now_ts),max(1,min(int(limit),500))))
+
+    # ------------------------- proactive group broadcast -------------------------
+    def get_group_broadcasts(self, limit: int = 500) -> list[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT * FROM group_broadcasts ORDER BY group_id LIMIT ?",
+            (max(1, min(int(limit), 1000)),),
+        )
+
+    def get_group_broadcast(self, group_id: str) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM group_broadcasts WHERE group_id=? LIMIT 1", (str(group_id),))
+
+    def upsert_group_broadcast(self, group_id: str, enabled: bool, message: str, interval_minutes: int, next_send_at: int | None = None) -> None:
+        now = int(time.time())
+        existing = self.get_group_broadcast(group_id)
+        if next_send_at is None:
+            if existing and int(existing["next_send_at"] or 0) > now and bool(enabled):
+                next_send_at = int(existing["next_send_at"])
+            else:
+                next_send_at = now + max(60, int(interval_minutes) * 60) if enabled else 0
+        self.execute(
+            "INSERT INTO group_broadcasts(group_id,enabled,message,interval_minutes,next_send_at,last_sent_at,total_sent,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET enabled=excluded.enabled,message=excluded.message,interval_minutes=excluded.interval_minutes,next_send_at=excluded.next_send_at,updated_at=excluded.updated_at",
+            (str(group_id), 1 if enabled else 0, str(message or "")[:3000], max(1, min(int(interval_minutes), 10080)), int(next_send_at),
+             int(existing["last_sent_at"] or 0) if existing else 0, int(existing["total_sent"] or 0) if existing else 0, utc_now()),
+        )
+
+    def get_due_group_broadcasts(self, now_ts: int, limit: int = 50) -> list[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT b.*, g.session_origin, g.enabled AS group_enabled FROM group_broadcasts b LEFT JOIN groups g ON g.group_id=b.group_id "
+            "WHERE b.enabled=1 AND b.next_send_at<=? AND g.enabled=1 AND g.session_origin IS NOT NULL AND b.message<>'' "
+            "ORDER BY b.next_send_at ASC LIMIT ?",
+            (int(now_ts), max(1, min(int(limit), 200))),
+        )
+
+    # ------------------------- persistent broadcast campaigns -------------------------
+    def get_broadcast_campaigns(self, limit: int = 100) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM broadcast_campaigns ORDER BY id DESC LIMIT ?", (max(1, min(int(limit), 200)),))
+
+    def get_broadcast_campaign(self, campaign_id: int) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM broadcast_campaigns WHERE id=? LIMIT 1", (int(campaign_id),))
+
+    def get_due_broadcast_campaigns(self, now_ts: int, limit: int = 20) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM broadcast_campaigns WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at ASC LIMIT ?", (int(now_ts), max(1, min(int(limit), 50))))
+
+    def get_broadcast_campaign_targets(self, campaign_id: int) -> list[sqlite3.Row]:
+        return self.fetchall(
+            "SELECT t.campaign_id,t.group_id,t.sort_order,g.session_origin,g.enabled AS group_enabled FROM broadcast_campaign_targets t LEFT JOIN groups g ON g.group_id=t.group_id WHERE t.campaign_id=? ORDER BY t.sort_order ASC,t.group_id ASC",
+            (int(campaign_id),),
+        )
+
+    def create_broadcast_campaign(self, name: str, message: str, group_interval_seconds: int, loop_interval_minutes: int, group_ids: list[str], next_run_at: int | None = None) -> int:
+        now = int(time.time())
+        created = utc_now()
+        next_at = int(next_run_at if next_run_at is not None else now)
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "INSERT INTO broadcast_campaigns(name,enabled,message,group_interval_seconds,loop_interval_minutes,next_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                (str(name or '循环群发')[:80], 1, str(message or '')[:3000], max(1, min(int(group_interval_seconds), 86400)), max(1, min(int(loop_interval_minutes), 525600)), next_at, created, created),
+            )
+            campaign_id = int(cur.lastrowid)
+            for idx, gid in enumerate(group_ids):
+                conn.execute("INSERT OR IGNORE INTO broadcast_campaign_targets(campaign_id,group_id,sort_order) VALUES(?,?,?)", (campaign_id, str(gid), idx))
+        return campaign_id
+
+    def replace_broadcast_campaign(self, campaign_id: int, name: str, message: str, group_interval_seconds: int, loop_interval_minutes: int, group_ids: list[str], enabled: bool = True, next_run_at: int | None = None) -> bool:
+        now = int(time.time())
+        existing = self.get_broadcast_campaign(campaign_id)
+        if not existing:
+            return False
+        if next_run_at is None:
+            next_run_at = int(existing['next_run_at'] or now) if enabled else 0
+        with self.transaction() as conn:
+            conn.execute("UPDATE broadcast_campaigns SET name=?,enabled=?,message=?,group_interval_seconds=?,loop_interval_minutes=?,next_run_at=?,updated_at=? WHERE id=?", (str(name or '循环群发')[:80], 1 if enabled else 0, str(message or '')[:3000], max(1, min(int(group_interval_seconds), 86400)), max(1, min(int(loop_interval_minutes), 525600)), int(next_run_at), utc_now(), int(campaign_id)))
+            conn.execute("DELETE FROM broadcast_campaign_targets WHERE campaign_id=?", (int(campaign_id),))
+            for idx, gid in enumerate(group_ids):
+                conn.execute("INSERT INTO broadcast_campaign_targets(campaign_id,group_id,sort_order) VALUES(?,?,?)", (int(campaign_id), str(gid), idx))
+        return True
+
+    def set_broadcast_campaign_enabled(self, campaign_id: int, enabled: bool, next_run_at: int | None = None) -> bool:
+        row = self.get_broadcast_campaign(campaign_id)
+        if not row:
+            return False
+        at = int(next_run_at or 0) if enabled else 0
+        self.execute("UPDATE broadcast_campaigns SET enabled=?,next_run_at=?,updated_at=? WHERE id=?", (1 if enabled else 0, at, utc_now(), int(campaign_id)))
+        return True
+
+    def delete_broadcast_campaign(self, campaign_id: int) -> bool:
+        with self.transaction() as conn:
+            cur = conn.execute("DELETE FROM broadcast_campaigns WHERE id=?", (int(campaign_id),))
+            conn.execute("DELETE FROM broadcast_campaign_targets WHERE campaign_id=?", (int(campaign_id),))
+            return cur.rowcount > 0
+
+    def mark_broadcast_campaign_started(self, campaign_id: int, started_at: int) -> None:
+        self.execute("UPDATE broadcast_campaigns SET last_started_at=?,updated_at=? WHERE id=?", (int(started_at), utc_now(), int(campaign_id)))
+
+    def mark_broadcast_campaign_finished(self, campaign_id: int, next_run_at: int, sent: int, failed: int) -> None:
+        self.execute("UPDATE broadcast_campaigns SET next_run_at=?,last_finished_at=?,total_cycles=total_cycles+1,total_sent=total_sent+?,total_failed=total_failed+?,updated_at=? WHERE id=?", (int(next_run_at), int(time.time()), int(sent), int(failed), utc_now(), int(campaign_id)))
+
+    def mark_group_broadcast_sent(self, group_id: str, next_send_at: int) -> None:
+        self.execute(
+            "UPDATE group_broadcasts SET last_sent_at=?, next_send_at=?, total_sent=total_sent+1, updated_at=? WHERE group_id=?",
+            (int(time.time()), int(next_send_at), utc_now(), str(group_id)),
+        )
+
+    def mark_group_broadcast_missed(self, group_id: str, next_send_at: int) -> None:
+        self.execute(
+            "UPDATE group_broadcasts SET next_send_at=?, updated_at=? WHERE group_id=?",
+            (int(next_send_at), utc_now(), str(group_id)),
+        )
+
+    def enqueue_duel_notification(self, battle_id: int, recipient_user_id: str, group_id: str, message: str, mention_user_id: str = "", dedupe_key: str = "") -> int:
+        key = str(dedupe_key or f"{battle_id}:{recipient_user_id}:{message[:80]}")[:240]
+        cur = self.execute(
+            "INSERT OR IGNORE INTO duel_notifications(battle_id,recipient_user_id,group_id,message,mention_user_id,dedupe_key,created_at,delivered) VALUES(?,?,?,?,?,?,?,0)",
+            (int(battle_id), str(recipient_user_id), str(group_id or ''), str(message)[:4000], str(mention_user_id or ''), key, utc_now()),
+        )
+        row = self.fetchone("SELECT id FROM duel_notifications WHERE dedupe_key=? LIMIT 1", (key,))
+        return int(row["id"]) if row else int(cur.lastrowid or 0)
+
+    def get_pending_duel_notifications(self, limit: int = 50) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM duel_notifications WHERE delivered=0 ORDER BY id ASC LIMIT ?", (max(1, min(int(limit), 200)),))
+
+    def mark_duel_notification_delivered(self, notification_id: int) -> None:
+        self.execute("UPDATE duel_notifications SET delivered=1,delivered_at=? WHERE id=?", (utc_now(), int(notification_id)))
 
     def get_undelivered_duel_messages(self, recipient_user_id: str, limit: int=20) -> list[sqlite3.Row]:
         return self.fetchall("SELECT * FROM duel_messages WHERE recipient_user_id=? AND delivered=0 ORDER BY id ASC LIMIT ?", (str(recipient_user_id),max(1,min(int(limit),100))))
