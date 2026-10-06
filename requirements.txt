@@ -1,1 +1,2 @@
-# 群聊世界 V1 使用 Python 标准库，无第三方依赖。
+# 群聊世界 V1.9.1：网络请求使用 httpx/aiohttp，推荐 httpx。
+httpx>=0.27,<1
