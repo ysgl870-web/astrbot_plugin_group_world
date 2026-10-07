@@ -54,6 +54,8 @@ class Database:
             today_active_users INTEGER NOT NULL DEFAULT 0,
             world_weather TEXT NOT NULL DEFAULT '晴天',
             world_location TEXT NOT NULL DEFAULT '新手村',
+            world_region_id TEXT NOT NULL DEFAULT 'starter',
+            world_faction TEXT NOT NULL DEFAULT '中立',
             boss_active INTEGER NOT NULL DEFAULT 0,
             boss_name TEXT,
             boss_hp INTEGER NOT NULL DEFAULT 0,
@@ -136,6 +138,9 @@ class Database:
             revive_count INTEGER NOT NULL DEFAULT 0,
             last_combat_group_id TEXT,
             last_combat_at TEXT,
+            world_region_id TEXT NOT NULL DEFAULT '',
+            faction TEXT NOT NULL DEFAULT '中立',
+            world_travel_at INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (group_id, user_id)
         );
 
@@ -320,6 +325,75 @@ class Database:
             winner_user_id TEXT, loser_user_id TEXT, result_json TEXT NOT NULL DEFAULT '{}',
             last_action_text TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS bounties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL DEFAULT 'duel',
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            target_user_id TEXT,
+            target_name TEXT,
+            target_group_id TEXT,
+            reward_coins INTEGER NOT NULL DEFAULT 0,
+            reward_gems INTEGER NOT NULL DEFAULT 0,
+            reward_exp INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            claimed_by_user_id TEXT,
+            claimed_by_name TEXT,
+            claimed_group_id TEXT,
+            claimed_origin TEXT,
+            target_origin TEXT,
+            challenge_expires_at INTEGER NOT NULL DEFAULT 0,
+            duel_battle_id INTEGER,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            expires_at INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL DEFAULT 'system',
+            created_at TEXT NOT NULL,
+            completed_by TEXT,
+            completed_at TEXT,
+            publisher_user_id TEXT,
+            publisher_name TEXT,
+            publisher_group_id TEXT,
+            publisher_origin TEXT,
+            target_player_uid TEXT,
+            escrow_coins INTEGER NOT NULL DEFAULT 0,
+            publish_fee_coins INTEGER NOT NULL DEFAULT 0,
+            reward_items_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_bounties_status_expire ON bounties(status,expires_at);
+        CREATE INDEX IF NOT EXISTS idx_bounties_target_status ON bounties(target_user_id,status);
+
+        CREATE TABLE IF NOT EXISTS global_boss (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            active INTEGER NOT NULL DEFAULT 0,
+            name TEXT NOT NULL DEFAULT '灭世古龙',
+            description TEXT NOT NULL DEFAULT '',
+            hp INTEGER NOT NULL DEFAULT 30000,
+            max_hp INTEGER NOT NULL DEFAULT 30000,
+            attack INTEGER NOT NULL DEFAULT 90,
+            defense INTEGER NOT NULL DEFAULT 45,
+            skill_chance_percent INTEGER NOT NULL DEFAULT 22,
+            duration_hours INTEGER NOT NULL DEFAULT 6,
+            attack_cooldown_seconds INTEGER NOT NULL DEFAULT 8,
+            stamina_cost INTEGER NOT NULL DEFAULT 12,
+            participation_reward INTEGER NOT NULL DEFAULT 200,
+            reward_pool_coins INTEGER NOT NULL DEFAULT 60000,
+            reward_pool_gems INTEGER NOT NULL DEFAULT 60,
+            exp_per_1000_damage INTEGER NOT NULL DEFAULT 20,
+            enrage_threshold_percent INTEGER NOT NULL DEFAULT 30,
+            enrage_multiplier REAL NOT NULL DEFAULT 1.5,
+            started_at INTEGER NOT NULL DEFAULT 0,
+            ends_at INTEGER NOT NULL DEFAULT 0,
+            last_finished_at INTEGER NOT NULL DEFAULT 0,
+            profile_json TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS global_boss_damage (
+            user_id TEXT PRIMARY KEY,
+            damage INTEGER NOT NULL DEFAULT 0,
+            attacks INTEGER NOT NULL DEFAULT 0,
+            last_attack_at INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE INDEX IF NOT EXISTS idx_duel_active_p1 ON duel_battles(p1_user_id,state);
         CREATE INDEX IF NOT EXISTS idx_duel_active_p2 ON duel_battles(p2_user_id,state);
         CREATE INDEX IF NOT EXISTS idx_duel_queue_rating ON duel_queue(status,rating,joined_at);
@@ -477,6 +551,9 @@ class Database:
                 "revive_count": "ALTER TABLE players ADD COLUMN revive_count INTEGER NOT NULL DEFAULT 0",
                 "last_combat_group_id": "ALTER TABLE players ADD COLUMN last_combat_group_id TEXT",
                 "last_combat_at": "ALTER TABLE players ADD COLUMN last_combat_at TEXT",
+                "world_region_id": "ALTER TABLE players ADD COLUMN world_region_id TEXT NOT NULL DEFAULT ''",
+                "faction": "ALTER TABLE players ADD COLUMN faction TEXT NOT NULL DEFAULT '中立'",
+                "world_travel_at": "ALTER TABLE players ADD COLUMN world_travel_at INTEGER NOT NULL DEFAULT 0",
             }
             for field, sql in migrations.items():
                 if field not in existing:
@@ -484,6 +561,26 @@ class Database:
             equipment_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(equipment)").fetchall()}
             if "revive_chance" not in equipment_existing:
                 self.conn.execute("ALTER TABLE equipment ADD COLUMN revive_chance INTEGER NOT NULL DEFAULT 0")
+            duel_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(duel_battles)").fetchall()}
+            if "bounty_id" not in duel_existing:
+                self.conn.execute("ALTER TABLE duel_battles ADD COLUMN bounty_id INTEGER")
+            bounty_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(bounties)").fetchall()}
+            bounty_migrations = {
+                "publisher_user_id": "ALTER TABLE bounties ADD COLUMN publisher_user_id TEXT",
+                "publisher_name": "ALTER TABLE bounties ADD COLUMN publisher_name TEXT",
+                "publisher_group_id": "ALTER TABLE bounties ADD COLUMN publisher_group_id TEXT",
+                "publisher_origin": "ALTER TABLE bounties ADD COLUMN publisher_origin TEXT",
+                "target_player_uid": "ALTER TABLE bounties ADD COLUMN target_player_uid TEXT",
+                "escrow_coins": "ALTER TABLE bounties ADD COLUMN escrow_coins INTEGER NOT NULL DEFAULT 0",
+                "publish_fee_coins": "ALTER TABLE bounties ADD COLUMN publish_fee_coins INTEGER NOT NULL DEFAULT 0",
+                "reward_items_json": "ALTER TABLE bounties ADD COLUMN reward_items_json TEXT NOT NULL DEFAULT '[]'",
+            }
+            for field, sql in bounty_migrations.items():
+                if field not in bounty_existing:
+                    self.conn.execute(sql)
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bounties_publisher_status ON bounties(publisher_user_id,status)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bounties_target_uid_status ON bounties(target_player_uid,status)")
+            self.conn.execute("INSERT OR IGNORE INTO global_boss(id) VALUES(1)")
             monster_existing = {r[1] for r in self.conn.execute("PRAGMA table_info(monster_encounters)").fetchall()}
             if "skills_json" not in monster_existing:
                 self.conn.execute("ALTER TABLE monster_encounters ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'")
@@ -512,6 +609,8 @@ class Database:
                 "current_npc_actions_json": "ALTER TABLE groups ADD COLUMN current_npc_actions_json TEXT NOT NULL DEFAULT '[]'",
                 "current_npc_expires_at": "ALTER TABLE groups ADD COLUMN current_npc_expires_at INTEGER NOT NULL DEFAULT 0",
                 "boss_profile_json": "ALTER TABLE groups ADD COLUMN boss_profile_json TEXT NOT NULL DEFAULT '{}'",
+                "world_region_id": "ALTER TABLE groups ADD COLUMN world_region_id TEXT NOT NULL DEFAULT 'starter'",
+                "world_faction": "ALTER TABLE groups ADD COLUMN world_faction TEXT NOT NULL DEFAULT '中立'",
             }
             for field, sql in group_migrations.items():
                 if field not in group_existing:
@@ -537,8 +636,15 @@ class Database:
                 used.add(candidate)
                 self.conn.execute("UPDATE players SET player_uid=? WHERE rowid=?", (candidate,row[0]))
             self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_players_player_uid ON players(player_uid) WHERE player_uid!=''")
-            self.conn.execute("UPDATE players SET battle_attack=50 WHERE battle_attack IS NULL OR battle_attack<1")
-            self.conn.execute("UPDATE players SET battle_defense=5 WHERE battle_defense IS NULL OR battle_defense<0")
+            self.conn.execute("UPDATE players SET battle_attack=CASE WHEN battle_attack IS NULL OR battle_attack<1 THEN 50 WHEN battle_attack>240 THEN 240 ELSE battle_attack END")
+            self.conn.execute("UPDATE players SET battle_defense=CASE WHEN battle_defense IS NULL OR battle_defense<0 THEN 5 WHEN battle_defense>180 THEN 180 ELSE battle_defense END")
+            self.conn.execute("UPDATE players SET battle_crit_rate=CASE WHEN battle_crit_rate IS NULL OR battle_crit_rate<0 THEN 8 ELSE MIN(28,battle_crit_rate) END")
+            self.conn.execute("UPDATE players SET battle_dodge_rate=CASE WHEN battle_dodge_rate IS NULL OR battle_dodge_rate<0 THEN 3 ELSE MIN(20,battle_dodge_rate) END")
+            self.conn.execute("UPDATE players SET battle_speed=CASE WHEN battle_speed IS NULL OR battle_speed<40 THEN 100 ELSE MIN(180,battle_speed) END")
+            self.conn.execute("UPDATE players SET max_hp=CASE WHEN max_hp IS NULL OR max_hp<200 THEN 1000 ELSE MIN(1800,max_hp) END")
+            self.conn.execute("UPDATE players SET hp=MIN(MAX(0,hp),max_hp)")
+            self.conn.execute("UPDATE equipment SET attack=MIN(120,MAX(0,attack)),defense=MIN(90,MAX(0,defense)),revive_chance=MIN(100,MAX(0,revive_chance))")
+            self.conn.execute("UPDATE pets SET attack=MIN(50,MAX(1,attack)),defense=MIN(50,MAX(1,defense)),luck=MIN(30,MAX(1,luck))")
             self.conn.commit()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
@@ -659,7 +765,7 @@ class Database:
             used={str(r[0]) for r in self.fetchall("SELECT player_uid FROM players WHERE player_uid!='' AND player_uid IS NOT NULL") }
             while not candidate or candidate in used:
                 candidate='GW-'+_secrets.token_hex(5).upper()
-            self.execute("UPDATE players SET player_uid=? WHERE group_id=? AND user_id=?", (candidate,group_id,user_id))
+            self.execute("UPDATE players SET player_uid=?, world_region_id=COALESCE(NULLIF(world_region_id,''),'starter') WHERE group_id=? AND user_id=?", (candidate,group_id,user_id))
         return self.get_player(group_id, user_id), True
 
     def refresh_stamina(self, player: sqlite3.Row, regen_minutes: int, regen_amount: int) -> sqlite3.Row:
@@ -956,7 +1062,7 @@ class Database:
             "SELECT COALESCE(SUM(attack),0) attack, COALESCE(SUM(defense),0) defense, COALESCE(SUM(explore_bonus),0) explore_bonus, COALESCE(SUM(revive_chance),0) revive_chance FROM equipment WHERE group_id=? AND user_id=? AND equipped=1",
             (group_id, user_id),
         )
-        return {"attack": int(row["attack"]), "defense": int(row["defense"]), "explore_bonus": int(row["explore_bonus"]), "revive_chance": int(row["revive_chance"])}
+        return {"attack": min(180,max(0,int(row["attack"]))), "defense": min(120,max(0,int(row["defense"]))), "explore_bonus": int(row["explore_bonus"]), "revive_chance": min(100,max(0,int(row["revive_chance"])))}
 
     def get_today_key(self) -> str:
         return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -1008,7 +1114,7 @@ class Database:
 
     def update_group(self, group_id: str, **fields: Any) -> None:
         allowed = {
-            "enabled", "session_origin", "last_event_at", "last_boss_at", "world_weather", "world_location",
+            "enabled", "session_origin", "last_event_at", "last_boss_at", "world_weather", "world_location", "world_region_id", "world_faction",
             "boss_active", "boss_name", "boss_hp", "boss_max_hp", "boss_started_at", "boss_ends_at", "boss_profile_json",
             "current_event_key", "current_event_expires_at", "current_event_effects_json", "world_event_enabled",
             "explore_enabled", "monster_enabled", "monster_chance_percent", "monster_max_count",
@@ -1433,6 +1539,7 @@ class Database:
             "battle_attack", "battle_defense", "battle_crit_rate", "battle_dodge_rate", "battle_speed",
             "battle_wins", "battle_losses", "battle_draws", "battle_kills", "battle_deaths", "pvp_rating", "pvp_streak",
             "death_state", "respawn_at", "revive_count", "last_combat_group_id", "last_combat_at",
+            "world_region_id", "faction", "world_travel_at",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
         if not clean:
@@ -1450,7 +1557,7 @@ class Database:
         if "stamina" in clean:
             clean["stamina"] = max(0, int(clean["stamina"]))
         if "max_hp" in clean:
-            clean["max_hp"] = max(1, min(9999, int(clean["max_hp"])))
+            clean["max_hp"] = max(200, min(1800, int(clean["max_hp"])))
         if "hp" in clean:
             clean["hp"] = max(0, int(clean["hp"]))
         if "max_hp" in clean and "hp" not in clean:
@@ -1468,11 +1575,11 @@ class Database:
             clean["luck"] = max(0, min(9999, int(clean["luck"])))
         if "renown" in clean:
             clean["renown"] = max(0, min(999999, int(clean["renown"])))
-        if "battle_attack" in clean: clean["battle_attack"] = max(1, min(999999, int(clean["battle_attack"])))
-        if "battle_defense" in clean: clean["battle_defense"] = max(0, min(999999, int(clean["battle_defense"])))
-        if "battle_crit_rate" in clean: clean["battle_crit_rate"] = max(0.0, min(95.0, float(clean["battle_crit_rate"])))
-        if "battle_dodge_rate" in clean: clean["battle_dodge_rate"] = max(0.0, min(80.0, float(clean["battle_dodge_rate"])))
-        if "battle_speed" in clean: clean["battle_speed"] = max(1, min(9999, int(clean["battle_speed"])))
+        if "battle_attack" in clean: clean["battle_attack"] = max(1, min(240, int(clean["battle_attack"])))
+        if "battle_defense" in clean: clean["battle_defense"] = max(0, min(180, int(clean["battle_defense"])))
+        if "battle_crit_rate" in clean: clean["battle_crit_rate"] = max(0.0, min(28.0, float(clean["battle_crit_rate"])))
+        if "battle_dodge_rate" in clean: clean["battle_dodge_rate"] = max(0.0, min(20.0, float(clean["battle_dodge_rate"])))
+        if "battle_speed" in clean: clean["battle_speed"] = max(40, min(180, int(clean["battle_speed"])))
         for counter in ("streak","total_checkin","tutorial_step","explore_count","total_explores","total_games","total_work","total_boss_damage","total_earned_coins","total_spent_coins"):
             if counter in clean:
                 clean[counter] = max(0, int(clean[counter]))
@@ -1486,6 +1593,63 @@ class Database:
         sets = ",".join(f"{k}=?" for k in clean)
         self.execute(f"UPDATE players SET {sets} WHERE group_id=? AND user_id=?", (*clean.values(), "__GLOBAL_USER__", user_id))
         return self.get_player("__GLOBAL_USER__", user_id)
+
+    def get_groups_by_region(self, region_id: str) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT * FROM groups WHERE world_region_id=? AND enabled=1 ORDER BY group_id", (str(region_id),))
+
+    def count_bounties_published(self, user_id: str, since_ts: int) -> int:
+        return int(self.fetchone("SELECT COUNT(*) FROM bounties WHERE publisher_user_id=? AND created_at>=?", (str(user_id), datetime.fromtimestamp(int(since_ts), timezone.utc).isoformat(timespec="seconds")))[0] or 0)
+
+    def get_user_bounties(self, user_id: str, limit: int = 20) -> list[sqlite3.Row]:
+        self.expire_bounties()
+        return self.fetchall(
+            "SELECT * FROM bounties WHERE publisher_user_id=? ORDER BY id DESC LIMIT ?",
+            (str(user_id), max(1, min(int(limit), 100))),
+        )
+
+    def has_active_bounty(self, publisher_user_id: str, target_user_id: str) -> bool:
+        row=self.fetchone("SELECT 1 FROM bounties WHERE publisher_user_id=? AND target_user_id=? AND status IN ('open','challenge','dueling') LIMIT 1", (str(publisher_user_id),str(target_user_id)))
+        return bool(row)
+
+    def recent_bounty_against_target(self, publisher_user_id: str, target_user_id: str, cutoff_ts: int) -> bool:
+        cutoff=datetime.fromtimestamp(int(cutoff_ts), timezone.utc).isoformat(timespec="seconds")
+        row=self.fetchone("SELECT 1 FROM bounties WHERE publisher_user_id=? AND target_user_id=? AND created_at>=? LIMIT 1", (str(publisher_user_id),str(target_user_id),cutoff))
+        return bool(row)
+
+    def create_player_bounty(self, *, publisher_user_id: str, publisher_name: str, publisher_group_id: str, publisher_origin: str,
+                             target_user_id: str, target_player_uid: str, target_name: str, target_group_id: str,
+                             title: str, description: str, reward_coins: int, expires_at: int, publish_fee: int=0) -> tuple[bool, str, int|None]:
+        reward=max(1,int(reward_coins)); fee=max(0,int(publish_fee)); total=reward+fee; now=utc_now()
+        with self.transaction() as conn:
+            prow=conn.execute("SELECT coins FROM players WHERE group_id='__GLOBAL_USER__' AND user_id=?", (str(publisher_user_id),)).fetchone()
+            if not prow: return False,"玩家档案不存在，请先使用 /我的。",None
+            if int(prow["coins"]) < total: return False,f"金币不足，需要 {total} 金币（悬赏托管 {reward} + 发布费 {fee}）。",None
+            cur=conn.execute("UPDATE players SET coins=coins-?,updated_at=?,total_spent_coins=total_spent_coins+? WHERE group_id='__GLOBAL_USER__' AND user_id=? AND coins>=?", (total,now,total,str(publisher_user_id),total))
+            if int(cur.rowcount or 0)!=1: return False,"扣除悬赏金币失败，请重试。",None
+            newbal=int(prow["coins"])-total
+            conn.execute("INSERT INTO transactions(group_id,user_id,kind,coins_delta,gems_delta,coins_balance,gems_balance,note,created_at) SELECT '__GLOBAL_USER__',?, 'bounty_escrow', ?,0,coins,gems,?,? FROM players WHERE group_id='__GLOBAL_USER__' AND user_id=?", (str(publisher_user_id),-total,f"发布悬赏：托管{reward}，发布费{fee}",now,str(publisher_user_id)))
+            cur=conn.execute(
+                "INSERT INTO bounties(type,title,description,target_user_id,target_name,target_group_id,reward_coins,reward_gems,reward_exp,status,expires_at,created_by,created_at,publisher_user_id,publisher_name,publisher_group_id,publisher_origin,target_player_uid,escrow_coins,publish_fee_coins) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    'duel', str(title)[:120], str(description)[:1000], str(target_user_id), str(target_name)[:120],
+                    str(target_group_id or '')[:128], reward, 0, 0, 'open', int(expires_at), str(publisher_user_id), now,
+                    str(publisher_user_id), str(publisher_name or '冒险者')[:120], str(publisher_group_id or '')[:128],
+                    str(publisher_origin or '')[:500], str(target_player_uid), reward, fee,
+                ),
+            )
+            return True,"",int(cur.lastrowid)
+
+    def _refund_bounty_escrow_conn(self, conn, row, note: str) -> int:
+        escrow=max(0,int(row["escrow_coins"] or 0)) if "escrow_coins" in row.keys() else 0
+        publisher=str(row["publisher_user_id"] or "") if "publisher_user_id" in row.keys() else ""
+        if escrow<=0 or not publisher: return 0
+        prow=conn.execute("SELECT coins,gems FROM players WHERE group_id='__GLOBAL_USER__' AND user_id=?",(publisher,)).fetchone()
+        if not prow: return 0
+        newcoins=int(prow["coins"])+escrow
+        conn.execute("UPDATE players SET coins=?,updated_at=? WHERE group_id='__GLOBAL_USER__' AND user_id=?",(newcoins,utc_now(),publisher))
+        conn.execute("INSERT INTO transactions(group_id,user_id,kind,coins_delta,gems_delta,coins_balance,gems_balance,note,created_at) VALUES('__GLOBAL_USER__',?, 'bounty_refund', ?,0,?, ?,?,?)",(publisher,escrow,newcoins,int(prow["gems"]),note,utc_now()))
+        return escrow
 
     def get_global_players(self, limit: int = 1000, search: str = "") -> list[sqlite3.Row]:
         sql="""SELECT p.*,
@@ -1655,15 +1819,15 @@ class Database:
         return self.fetchall("""SELECT * FROM duel_queue WHERE status='queued' AND user_id!=? AND rating BETWEEN ? AND ?
             ORDER BY ABS(rating-?) ASC, joined_at ASC LIMIT ?""", (str(exclude_user),low,high,int(rating),max(1,min(int(limit),100))))
 
-    def create_duel_battle(self, p1: dict[str,Any], p2: dict[str,Any], starter: str, expires_at: int) -> int:
+    def create_duel_battle(self, p1: dict[str,Any], p2: dict[str,Any], starter: str, expires_at: int, bounty_id: int | None = None) -> int:
         now=utc_now()
         with self.transaction() as conn:
             cur=conn.execute("""INSERT INTO duel_battles(
                 p1_user_id,p1_group_id,p1_origin,p1_name,p2_user_id,p2_group_id,p2_origin,p2_name,state,turn_user_id,round_no,
-                p1_hp,p1_max_hp,p2_hp,p2_max_hp,p1_guard,p2_guard,p1_stamina,p2_stamina,created_at,updated_at,expires_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+                p1_hp,p1_max_hp,p2_hp,p2_max_hp,p1_guard,p2_guard,p1_stamina,p2_stamina,created_at,updated_at,expires_at,bounty_id
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 p1['user_id'],p1['group_id'],p1['origin'],p1.get('name','冒险者'),p2['user_id'],p2['group_id'],p2['origin'],p2.get('name','冒险者'),
-                'active',starter,1,int(p1['max_hp']),int(p1['max_hp']),int(p2['max_hp']),int(p2['max_hp']),0,0,100,100,now,now,int(expires_at)
+                'active',starter,1,int(p1['max_hp']),int(p1['max_hp']),int(p2['max_hp']),int(p2['max_hp']),0,0,100,100,now,now,int(expires_at),int(bounty_id) if bounty_id else None
             ))
             conn.execute("UPDATE duel_queue SET status='matched' WHERE user_id IN (?,?)", (p1['user_id'],p2['user_id']))
             return int(cur.lastrowid)
@@ -1672,7 +1836,7 @@ class Database:
         return self.fetchone("SELECT * FROM duel_battles WHERE id=?", (int(battle_id),))
 
     def update_duel(self, battle_id: int, **fields: Any) -> None:
-        allowed={'state','turn_user_id','round_no','p1_hp','p2_hp','p1_guard','p2_guard','p1_stamina','p2_stamina','p1_group_id','p1_origin','p2_group_id','p2_origin','updated_at','expires_at','winner_user_id','loser_user_id','result_json','last_action_text'}
+        allowed={'state','turn_user_id','round_no','p1_hp','p2_hp','bounty_id','p1_guard','p2_guard','p1_stamina','p2_stamina','p1_group_id','p1_origin','p2_group_id','p2_origin','updated_at','expires_at','winner_user_id','loser_user_id','result_json','last_action_text'}
         clean={k:v for k,v in fields.items() if k in allowed}
         if clean:
             clean.setdefault('updated_at',utc_now())
@@ -1689,6 +1853,200 @@ class Database:
 
     def get_due_respawns(self, now_ts: int, limit: int=100) -> list[sqlite3.Row]:
         return self.fetchall("SELECT * FROM players WHERE group_id='__GLOBAL_USER__' AND death_state=1 AND respawn_at>0 AND respawn_at<=? ORDER BY respawn_at ASC LIMIT ?", (int(now_ts),max(1,min(int(limit),500))))
+
+    # ------------------------- bounty / global boss -------------------------
+    def create_bounty(self, *, bounty_type: str, title: str, description: str = "", target_user_id: str | None = None,
+                      target_name: str = "", target_group_id: str = "", reward_coins: int = 0,
+                      reward_gems: int = 0, reward_exp: int = 0, reward_items: list[dict[str, Any]] | None = None,
+                      expires_at: int = 0, created_by: str = "system", publisher_user_id: str = "", publisher_name: str = "",
+                      publisher_group_id: str = "", publisher_origin: str = "", target_player_uid: str = "") -> int:
+        items=[]
+        for item in reward_items or []:
+            if not isinstance(item,dict):
+                continue
+            iid=str(item.get('item_id') or item.get('id') or '').strip()[:96]
+            name=str(item.get('item_name') or item.get('name') or iid).strip()[:120]
+            qty=max(1,min(100,int(item.get('qty') or item.get('amount') or 1)))
+            reward_type=str(item.get('type') or item.get('reward_type') or 'item').strip().lower()
+            if reward_type not in {'item','equipment'}: reward_type='item'
+            record={'item_id':iid,'item_name':name,'qty':qty,'source':str(item.get('source') or '')[:80],'type':reward_type}
+            if reward_type=='equipment':
+                record.update({
+                    'equipment_recipe_id':str(item.get('equipment_recipe_id') or '')[:96],
+                    'slot':str(item.get('slot') or '主手')[:30],
+                    'rarity':str(item.get('rarity') or '普通')[:30],
+                    'level':max(1,min(100,int(item.get('level',1) or 1))),
+                    'attack':max(0,min(300,int(item.get('attack',0) or 0))),
+                    'defense':max(0,min(200,int(item.get('defense',0) or 0))),
+                    'explore_bonus':max(0,min(100,int(item.get('explore_bonus',0) or 0))),
+                    'revive_chance':max(0,min(100,int(item.get('revive_chance',0) or 0))),
+                })
+            if iid: items.append(record)
+        cur = self.execute(
+            "INSERT INTO bounties(type,title,description,target_user_id,target_name,target_group_id,reward_coins,reward_gems,reward_exp,reward_items_json,status,expires_at,created_by,created_at,publisher_user_id,publisher_name,publisher_group_id,publisher_origin,target_player_uid) VALUES(?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?)",
+            (str(bounty_type or 'duel'), str(title)[:120], str(description)[:1000], target_user_id, str(target_name or '')[:120],
+             str(target_group_id or '')[:128], max(0,int(reward_coins)), max(0,int(reward_gems)), max(0,int(reward_exp)),
+             json.dumps(items,ensure_ascii=False,separators=(',',':')), max(0,int(expires_at)), str(created_by)[:80], utc_now(),
+             str(publisher_user_id or ''),str(publisher_name or '')[:120],str(publisher_group_id or '')[:128],str(publisher_origin or '')[:500],str(target_player_uid or ''))
+        )
+        return int(cur.lastrowid)
+
+    def expire_bounties(self, now_ts: int | None = None) -> int:
+        now_ts = int(now_ts or time.time()); count=0
+        with self.transaction() as conn:
+            rows=conn.execute("SELECT * FROM bounties WHERE status IN ('open','challenge') AND expires_at>0 AND expires_at<=?",(now_ts,)).fetchall()
+            for row in rows:
+                self._refund_bounty_escrow_conn(conn,row,f"悬赏 #{row['id']} 到期退回托管金币")
+                cur=conn.execute("UPDATE bounties SET status='expired',escrow_coins=0,claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL,completed_at=? WHERE id=? AND status IN ('open','challenge')",(utc_now(),int(row['id'])))
+                count += int(cur.rowcount or 0)
+            cur=conn.execute("UPDATE bounties SET status='open',claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL WHERE status='challenge' AND challenge_expires_at>0 AND challenge_expires_at<=? AND (expires_at=0 OR expires_at>?)",(now_ts,now_ts))
+            count += int(cur.rowcount or 0)
+        return count
+
+    def get_bounties(self, status: str | None = None, limit: int = 50) -> list[sqlite3.Row]:
+        self.expire_bounties()
+        if status:
+            return self.fetchall("SELECT * FROM bounties WHERE status=? ORDER BY id DESC LIMIT ?", (str(status), max(1,min(int(limit),500))))
+        return self.fetchall("SELECT * FROM bounties ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'challenge' THEN 1 WHEN 'dueling' THEN 2 ELSE 3 END, id DESC LIMIT ?", (max(1,min(int(limit),500)),))
+
+    def get_bounty(self, bounty_id: int) -> Optional[sqlite3.Row]:
+        self.expire_bounties(); return self.fetchone("SELECT * FROM bounties WHERE id=?", (int(bounty_id),))
+
+    def claim_bounty(self, bounty_id: int, claimant_user_id: str, claimant_name: str, claimant_group_id: str, claimant_origin: str, challenge_expires_at: int) -> bool:
+        with self.transaction() as conn:
+            row=conn.execute("SELECT * FROM bounties WHERE id=?",(int(bounty_id),)).fetchone()
+            if not row or str(row['status'])!='open' or (int(row['expires_at'] or 0)>0 and int(row['expires_at'])<=int(time.time())): return False
+            if str(row['publisher_user_id'] or '')==str(claimant_user_id): return False
+            cur=conn.execute("UPDATE bounties SET status='challenge',claimed_by_user_id=?,claimed_by_name=?,claimed_group_id=?,claimed_origin=?,challenge_expires_at=? WHERE id=? AND status='open'",(str(claimant_user_id),str(claimant_name or '冒险者')[:120],str(claimant_group_id or '')[:128],str(claimant_origin or '')[:500],int(challenge_expires_at),int(bounty_id)))
+            return int(cur.rowcount or 0)==1
+
+    def accept_bounty(self, bounty_id: int, target_user_id: str) -> Optional[sqlite3.Row]:
+        with self.transaction() as conn:
+            cur=conn.execute("UPDATE bounties SET status='dueling' WHERE id=? AND status='challenge' AND target_user_id=? AND challenge_expires_at>?",(int(bounty_id),str(target_user_id),int(time.time())))
+            if int(cur.rowcount or 0)!=1:return None
+            return conn.execute("SELECT * FROM bounties WHERE id=?",(int(bounty_id),)).fetchone()
+
+    def reject_bounty(self, bounty_id: int, target_user_id: str) -> bool:
+        with self.transaction() as conn:
+            cur=conn.execute("UPDATE bounties SET status='open',claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL,failed_attempts=failed_attempts+1 WHERE id=? AND status='challenge' AND target_user_id=?",(int(bounty_id),str(target_user_id)))
+            return int(cur.rowcount or 0)==1
+
+    def cancel_bounty(self, bounty_id: int, requester_user_id: str | None = None) -> dict[str,Any]:
+        with self.transaction() as conn:
+            row=conn.execute("SELECT * FROM bounties WHERE id=?",(int(bounty_id),)).fetchone()
+            if not row or str(row['status']) not in {'open','challenge'}: return {'ok':False,'message':'该悬赏不存在或当前状态不能取消。'}
+            publisher=str(row['publisher_user_id'] or '')
+            if requester_user_id is not None and publisher and publisher!=str(requester_user_id): return {'ok':False,'message':'只有悬赏发布者本人可以取消。'}
+            refund=self._refund_bounty_escrow_conn(conn,row,f"取消悬赏 #{row['id']}，退回托管金币")
+            cur=conn.execute("UPDATE bounties SET status='cancelled',escrow_coins=0,claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL,completed_at=? WHERE id=? AND status IN ('open','challenge')",(utc_now(),int(bounty_id)))
+            if int(cur.rowcount or 0)!=1:return {'ok':False,'message':'取消失败，悬赏状态已变化。'}
+            return {'ok':True,'message':f'悬赏 #{row["id"]} 已取消。','refund_coins':refund}
+
+    def attach_bounty_duel(self, bounty_id: int, battle_id: int) -> None:
+        self.execute("UPDATE bounties SET duel_battle_id=? WHERE id=? AND status='dueling'",(int(battle_id),int(bounty_id)))
+
+    def reopen_bounty_after_draw(self, bounty_id: int) -> None:
+        self.execute("UPDATE bounties SET status='open',claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL WHERE id=? AND status='dueling'",(int(bounty_id),))
+
+    def settle_bounty_duel(self, bounty_id: int, winner_user_id: str, loser_user_id: str) -> dict[str,Any]:
+        with self.transaction() as conn:
+            row=conn.execute("SELECT * FROM bounties WHERE id=?",(int(bounty_id),)).fetchone()
+            if not row or str(row['status'])!='dueling': return {'ok':False,'message':'悬赏已失效。'}
+            claimed=str(row['claimed_by_user_id'] or ''); target=str(row['target_user_id'] or '')
+            if claimed and str(winner_user_id)==claimed:
+                coins=max(0,int(row['escrow_coins'] or row['reward_coins'] or 0)); gems=max(0,int(row['reward_gems'] or 0)); exp=max(0,int(row['reward_exp'] or 0))
+                try:
+                    reward_items=json.loads(str(row['reward_items_json'] or '[]'))
+                except Exception:
+                    reward_items=[]
+                if not isinstance(reward_items,list): reward_items=[]
+                normalized_items=[]; total_qty=0
+                for item in reward_items[:6]:
+                    if not isinstance(item,dict): continue
+                    iid=str(item.get('item_id') or '').strip()[:96]
+                    iname=str(item.get('item_name') or iid).strip()[:120]
+                    try: qty=max(1,min(100,int(item.get('qty') or 1)))
+                    except Exception: qty=1
+                    if not iid: continue
+                    if total_qty+qty>200: qty=max(0,200-total_qty)
+                    if qty<=0: break
+                    reward_type=str(item.get('type') or item.get('reward_type') or 'item').strip().lower()
+                    if reward_type not in {'item','equipment'}: reward_type='item'
+                    record={'item_id':iid,'item_name':iname,'qty':qty,'source':str(item.get('source') or '')[:80],'type':reward_type}
+                    if reward_type=='equipment':
+                        record.update({
+                            'equipment_recipe_id':str(item.get('equipment_recipe_id') or '')[:96],
+                            'slot':str(item.get('slot') or '主手')[:30],
+                            'rarity':str(item.get('rarity') or '普通')[:30],
+                            'level':max(1,min(100,int(item.get('level',1) or 1))),
+                            'attack':max(0,min(300,int(item.get('attack',0) or 0))),
+                            'defense':max(0,min(200,int(item.get('defense',0) or 0))),
+                            'explore_bonus':max(0,min(100,int(item.get('explore_bonus',0) or 0))),
+                            'revive_chance':max(0,min(100,int(item.get('revive_chance',0) or 0))),
+                        })
+                    normalized_items.append(record)
+                    total_qty += qty
+                prow=conn.execute("SELECT coins,gems FROM players WHERE group_id='__GLOBAL_USER__' AND user_id=?",(claimed,)).fetchone()
+                if not prow:return {'ok':False,'message':'悬赏胜者不存在。'}
+                pfull=conn.execute("SELECT coins,gems,level,exp FROM players WHERE group_id='__GLOBAL_USER__' AND user_id=?",(claimed,)).fetchone()
+                level=max(1,min(100,int(pfull['level'] or 1))); current_exp=max(0,int(pfull['exp'] or 0))+exp
+                while level<100:
+                    need=100+level*60
+                    if current_exp<need: break
+                    current_exp-=need; level+=1
+                newcoins=int(pfull['coins'])+coins
+                newgems=int(pfull['gems'])+gems
+                conn.execute("UPDATE players SET coins=?,gems=?,level=?,exp=?,updated_at=? WHERE group_id='__GLOBAL_USER__' AND user_id=?",(newcoins,newgems,level,current_exp,utc_now(),claimed))
+                conn.execute("INSERT INTO transactions(group_id,user_id,kind,coins_delta,gems_delta,coins_balance,gems_balance,note,created_at) VALUES('__GLOBAL_USER__',?,?,?, ?,?, ?,?,?)",(claimed,'bounty_reward',coins,gems,newcoins,newgems,f"完成悬赏 #{row['id']} +{exp} EXP",utc_now()))
+                for item in normalized_items:
+                    qty=item['qty']; reward_type=item.get('type','item')
+                    if reward_type=='equipment':
+                        for _ in range(qty):
+                            conn.execute(
+                                "INSERT INTO equipment(group_id,user_id,name,slot,rarity,level,attack,defense,explore_bonus,revive_chance,equipped,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?)",
+                                ('__GLOBAL_USER__',claimed,item['item_name'],item.get('slot','主手'),item.get('rarity','普通'),int(item.get('level',1)),int(item.get('attack',0)),int(item.get('defense',0)),int(item.get('explore_bonus',0)),int(item.get('revive_chance',0)),utc_now())
+                            )
+                    else:
+                        iid=item['item_id']; iname=item['item_name']
+                        inv=conn.execute("SELECT qty FROM inventory WHERE group_id='__GLOBAL_USER__' AND user_id=? AND item_id=?",(claimed,iid)).fetchone()
+                        if inv:
+                            conn.execute("UPDATE inventory SET qty=?,item_name=? WHERE group_id='__GLOBAL_USER__' AND user_id=? AND item_id=?",(int(inv['qty'])+qty,iname,claimed,iid))
+                        else:
+                            conn.execute("INSERT INTO inventory(group_id,user_id,item_id,item_name,qty) VALUES('__GLOBAL_USER__',?,?,?,?)",(claimed,iid,iname,qty))
+                conn.execute("UPDATE bounties SET status='completed',completed_by=?,completed_at=?,escrow_coins=0 WHERE id=? AND status='dueling'",(str(winner_user_id),utc_now(),int(bounty_id)))
+                return {'ok':True,'completed':True,'coins':coins,'gems':gems,'exp':exp,'items':normalized_items,'target_user_id':target,'publisher_user_id':str(row['publisher_user_id'] or '')}
+            conn.execute("UPDATE bounties SET status='open',claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL,failed_attempts=failed_attempts+1 WHERE id=? AND status='dueling'",(int(bounty_id),))
+            return {'ok':True,'completed':False,'reopened':True,'target_user_id':target}
+
+    def get_global_boss(self) -> sqlite3.Row:
+        self.execute("INSERT OR IGNORE INTO global_boss(id) VALUES(1)")
+        row = self.fetchone("SELECT * FROM global_boss WHERE id=1")
+        return row
+
+    def update_global_boss(self, **fields: Any) -> None:
+        allowed={'active','name','description','hp','max_hp','attack','defense','skill_chance_percent','duration_hours','attack_cooldown_seconds','stamina_cost','participation_reward','reward_pool_coins','reward_pool_gems','exp_per_1000_damage','enrage_threshold_percent','enrage_multiplier','started_at','ends_at','last_finished_at','profile_json'}
+        clean={k:v for k,v in fields.items() if k in allowed}
+        if not clean: return
+        self.execute("UPDATE global_boss SET "+','.join(f'{k}=?' for k in clean)+" WHERE id=1", tuple(clean.values()))
+
+    def reset_global_boss_damage(self) -> None:
+        self.execute("DELETE FROM global_boss_damage")
+
+    def add_global_boss_damage(self, user_id: str, damage: int, attack_time: int | None = None) -> None:
+        attack_time=int(attack_time or time.time())
+        self.execute("INSERT INTO global_boss_damage(user_id,damage,attacks,last_attack_at) VALUES(?,?,1,?) ON CONFLICT(user_id) DO UPDATE SET damage=damage+excluded.damage,attacks=attacks+1,last_attack_at=excluded.last_attack_at", (str(user_id),max(0,int(damage)),attack_time))
+
+    def get_global_boss_damage(self, user_id: str) -> Optional[sqlite3.Row]:
+        return self.fetchone("SELECT * FROM global_boss_damage WHERE user_id=?", (str(user_id),))
+
+    def get_global_boss_ranking(self, limit: int = 20) -> list[sqlite3.Row]:
+        return self.fetchall("SELECT d.*,COALESCE(p.name,d.user_id) AS name,p.level,p.player_uid FROM global_boss_damage d LEFT JOIN players p ON p.group_id='__GLOBAL_USER__' AND p.user_id=d.user_id ORDER BY d.damage DESC,d.attacks DESC LIMIT ?", (max(1,min(int(limit),1000)),))
+
+    def damage_global_boss_atomic(self, damage: int) -> sqlite3.Row:
+        with self.transaction() as conn:
+            conn.execute("UPDATE global_boss SET hp=MAX(0,hp-?) WHERE id=1 AND active=1", (max(0,int(damage)),))
+            row=conn.execute("SELECT * FROM global_boss WHERE id=1").fetchone()
+            return row
 
     # ------------------------- proactive group broadcast -------------------------
     def get_group_broadcasts(self, limit: int = 500) -> list[sqlite3.Row]:

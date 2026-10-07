@@ -49,16 +49,18 @@ SKILLS = {
     "雷霆震爆": {"name":"雷霆震爆","type":"aoe","power":1.7,"cost":26,"cooldown":22,"learn_level":18,"required_skill":"雷击","element":"雷","aoe_ratio":0.9,"desc":"范围雷击，拥有小概率震慑敌人。"},
 }
 
+COMBAT_LIMITS = {"player_damage": 320, "boss_damage": 320, "duel_damage": 320, "monster_hp": 4200, "monster_attack": 70, "monster_defense": 40, "monster_hit": 48, "monster_skill_hit": 64, "aoe_hit": 38, "local_boss_hp": 30000, "global_boss_hp": 120000, "global_boss_attack": 140, "global_boss_defense": 90}
+
 MONSTER_TEMPLATES = {
-    "slime": {"name":"软泥怪","hp":220,"attack":28,"defense":4,"coins":180,"exp":90,"items":{"slime_core":1},"skills":[{"name":"黏液喷射","multiplier":1.20,"chance":25,"text":"减速黏液溅射，造成额外伤害！","aoe":False}]},
-    "wolf": {"name":"森林野狼","hp":360,"attack":42,"defense":8,"coins":280,"exp":150,"items":{"wolf_fang":1},"skills":[{"name":"群狼扑袭","multiplier":1.28,"chance":30,"text":"狼群协同扑袭，波及附近冒险者！","aoe":True}]},
-    "goblin": {"name":"贪财哥布林","hp":500,"attack":55,"defense":12,"coins":520,"exp":240,"items":{"goblin_ear":1,"ore":1},"skills":[{"name":"零钱炸弹","multiplier":1.32,"chance":26,"text":"把金币做成爆弹砸向你！","aoe":False}]},
-    "skeleton": {"name":"荒漠骷髅","hp":620,"attack":68,"defense":18,"coins":700,"exp":330,"items":{"bone":2,"ore":1},"skills":[{"name":"骨矛齐射","multiplier":1.38,"chance":28,"text":"骨矛从四面八方射来！","aoe":True}]},
-    "ice_beast": {"name":"冰原兽","hp":900,"attack":92,"defense":26,"coins":1100,"exp":520,"items":{"ice_core":1,"crystal":1},"skills":[{"name":"冰川震击","multiplier":1.45,"chance":32,"text":"冰霜震波席卷战场！","aoe":True}]},
-    "lava_hound": {"name":"熔岩猎犬","hp":1250,"attack":120,"defense":34,"coins":1600,"exp":760,"items":{"lava_core":1,"ore":3},"skills":[{"name":"熔岩喷吐","multiplier":1.50,"chance":34,"text":"灼热熔岩喷向多人！","aoe":True}]},
-    "void_watcher": {"name":"虚空凝视者","hp":1800,"attack":155,"defense":45,"coins":2400,"exp":1200,"items":{"void_fragment":1,"crystal":2},"skills":[{"name":"虚空撕裂","multiplier":1.55,"chance":28,"text":"扭曲空间造成额外范围伤害！","aoe":True}]},
-    "flame_imp": {"name":"炎魔小鬼","hp":760,"attack":105,"defense":20,"coins":980,"exp":430,"items":{"lava_core":1},"skills":[{"name":"火焰喷射","multiplier":1.45,"chance":35,"text":"喷出火焰，造成额外伤害！","aoe":False}]},
-    "thunder_hawk": {"name":"雷翼鹰","hp":1100,"attack":132,"defense":29,"coins":1450,"exp":690,"items":{"crystal":1,"feather":2},"skills":[{"name":"雷羽风暴","multiplier":1.6,"chance":30,"text":"召来雷电进行范围打击！","aoe":True}]},
+    "slime": {"name":"软泥怪","min_level":1,"hp":220,"attack":28,"defense":4,"coins":180,"exp":90,"items":{"slime_core":1},"skills":[{"name":"黏液喷射","multiplier":1.20,"chance":25,"text":"减速黏液溅射，造成额外伤害！","aoe":False}]},
+    "wolf": {"name":"森林野狼","min_level":1,"hp":360,"attack":42,"defense":8,"coins":280,"exp":150,"items":{"wolf_fang":1},"skills":[{"name":"群狼扑袭","multiplier":1.28,"chance":30,"text":"狼群协同扑袭，波及附近冒险者！","aoe":True}]},
+    "goblin": {"name":"贪财哥布林","min_level":3,"hp":480,"attack":52,"defense":11,"coins":500,"exp":230,"items":{"goblin_ear":1,"ore":1},"skills":[{"name":"零钱炸弹","multiplier":1.32,"chance":26,"text":"把金币做成爆弹砸向你！","aoe":False}]},
+    "skeleton": {"name":"荒漠骷髅","min_level":5,"hp":600,"attack":60,"defense":16,"coins":680,"exp":320,"items":{"bone":2,"ore":1},"skills":[{"name":"骨矛齐射","multiplier":1.38,"chance":28,"text":"骨矛从四面八方射来！","aoe":True}]},
+    "ice_beast": {"name":"冰原兽","min_level":8,"hp":850,"attack":68,"defense":24,"coins":1000,"exp":480,"items":{"ice_core":1,"crystal":1},"skills":[{"name":"冰川震击","multiplier":1.45,"chance":32,"text":"冰霜震波席卷战场！","aoe":True}]},
+    "lava_hound": {"name":"熔岩猎犬","min_level":12,"hp":1150,"attack":70,"defense":32,"coins":1450,"exp":700,"items":{"lava_core":1,"ore":3},"skills":[{"name":"熔岩喷吐","multiplier":1.50,"chance":34,"text":"灼热熔岩喷向多人！","aoe":True}]},
+    "void_watcher": {"name":"虚空凝视者","min_level":16,"hp":1600,"attack":70,"defense":38,"coins":2200,"exp":1050,"items":{"void_fragment":1,"crystal":2},"skills":[{"name":"虚空撕裂","multiplier":1.55,"chance":28,"text":"扭曲空间造成额外范围伤害！","aoe":True}]},
+    "flame_imp": {"name":"炎魔小鬼","min_level":6,"hp":720,"attack":65,"defense":18,"coins":900,"exp":410,"items":{"lava_core":1},"skills":[{"name":"火焰喷射","multiplier":1.45,"chance":35,"text":"喷出火焰，造成额外伤害！","aoe":False}]},
+    "thunder_hawk": {"name":"雷翼鹰","min_level":10,"hp":1000,"attack":70,"defense":28,"coins":1350,"exp":650,"items":{"crystal":1,"feather":2},"skills":[{"name":"雷羽风暴","multiplier":1.6,"chance":30,"text":"召来雷电进行范围打击！","aoe":True}]},
 }
 LOCATIONS = [
     ("新手村", 1, "安全、稳定，适合新人"),
@@ -70,6 +72,19 @@ LOCATIONS = [
     ("熔岩火山", 6, "火系材料与传说事件"),
     ("虚空领域", 7, "终局资源，死亡概率更高"),
 ]
+
+WORLD_REGIONS = {
+    "starter": {"name":"新手村","tier":1,"fare":0,"faction":"中立","desc":"安全、稳定，适合新人"},
+    "wind_city": {"name":"西风城","tier":2,"fare":80,"faction":"王国","desc":"贸易与冒险者公会中心"},
+    "black_forest": {"name":"黑森林","tier":2,"fare":100,"faction":"自然","desc":"木材、草药与野兽素材丰富"},
+    "port_city": {"name":"港口城","tier":2,"fare":100,"faction":"联盟","desc":"商路繁荣，适合交易与远行"},
+    "north_forest": {"name":"北境森林","tier":3,"fare":150,"faction":"自然","desc":"寒冷地区，高品质狩猎素材"},
+    "desert": {"name":"黄沙荒漠","tier":3,"fare":150,"faction":"中立","desc":"遗迹与宝箱密集的危险区域"},
+    "black_market": {"name":"黑市","tier":3,"fare":220,"faction":"深渊","desc":"高风险交易区，稀有事件更多"},
+    "dungeon": {"name":"地下城","tier":4,"fare":280,"faction":"深渊","desc":"终局冒险区域，不适合新手"},
+}
+RENOWN_TIERS = [(10000,"传奇"),(5000,"城市贵宾"),(1500,"知名人士"),(500,"熟面孔"),(100,"冒险者"),(0,"陌生人")]
+SEASON_DATA = {"春季":{"months":(3,4,5),"effect":"探索材料 +5%"},"夏季":{"months":(6,7,8),"effect":"体力恢复效率 +5%"},"秋季":{"months":(9,10,11),"effect":"探索金币 +5%"},"冬季":{"months":(12,1,2),"effect":"冰雪区域事件更活跃"}}
 
 ITEM_INFO = {
     "potion": ("体力药水", "使用后恢复 25 点体力。"),
@@ -185,6 +200,80 @@ class WorldEngine:
             return data if isinstance(data, dict) else (default or {})
         except Exception:
             return default or {}
+
+    def renown_title(self, value: int) -> str:
+        score=max(0,int(value))
+        for threshold,title in RENOWN_TIERS:
+            if score>=threshold:return title
+        return "陌生人"
+
+    def add_renown(self, user_id: str, amount: int, reason: str = "") -> int:
+        if not bool(self.cfg("world_reputation_enabled",None,True)) or int(amount)==0:
+            p=self.db.get_player("__GLOBAL_USER__",user_id); return int(p["renown"] or 0) if p else 0
+        p=self.db.get_player("__GLOBAL_USER__",user_id)
+        if not p:return 0
+        new=max(0,min(999999,int(p["renown"])+int(amount)))
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        raw.set_global_player_fields(user_id,{"renown":new,"title":self.renown_title(new)})
+        return new
+
+    def season_info(self) -> tuple[str,str]:
+        override=str(self.cfg("world_season_override",None,"自动") or "自动").strip()
+        if override in SEASON_DATA:return override,SEASON_DATA[override]["effect"]
+        month=datetime.now(timezone.utc).month
+        for name,data in SEASON_DATA.items():
+            if month in data["months"]: return name,data["effect"]
+        return "春季",SEASON_DATA["春季"]["effect"]
+
+    def _group_region_id(self, group_id: str) -> str:
+        row=self.db.raw.get_group(group_id) if hasattr(self.db,"raw") else self.db.get_group(group_id)
+        if not row:return "starter"
+        rid=str(row["world_region_id"] or "").strip()
+        if rid in WORLD_REGIONS:return rid
+        name=str(row["world_location"] or "新手村")
+        for k,v in WORLD_REGIONS.items():
+            if v["name"]==name:return k
+        return "starter"
+
+    def world_map(self) -> str:
+        if not bool(self.cfg("world_map_enabled",None,True)): return "🗺️ 世界地图系统当前关闭。"
+        season,effect=self.season_info()
+        lines=["🗺️【大世界地图】",f"当前季节：{season}｜世界效果：{effect}","","地区："]
+        for rid,v in WORLD_REGIONS.items():
+            groups=len(self.db.raw.get_groups_by_region(rid) if hasattr(self.db,"raw") else self.db.get_groups_by_region(rid))
+            flag="✅" if groups else "○"
+            lines.append(f"{flag} {v['name']}｜危险等级 {v['tier']}｜旅行费 {v['fare']}+区域差价｜驻点群 {groups}｜{v['faction']}")
+        lines.append("\n旅行：`/旅行 地区名`。旅行只改变你的世界坐标，进入对应驻点群即可参与当地事件。")
+        return "\n".join(lines)
+
+    def player_world_status(self, user_id: str, name: str, group_id: str) -> str:
+        p,_=self.ensure_player(group_id,user_id,name)
+        rid=str(p["world_region_id"] or "")
+        if rid not in WORLD_REGIONS: rid=self._group_region_id(group_id); self.db.raw.set_global_player_fields(user_id,{"world_region_id":rid})
+        region=WORLD_REGIONS[rid]; season,effect=self.season_info()
+        title=self.renown_title(int(p["renown"]))
+        return f"🧭【世界坐标】\n玩家：{p['name']}\nUID：{p['player_uid']}\n当前位置：{region['name']}（Tier {region['tier']}）\n阵营：{p['faction'] or '中立'}\n🌟 世界声望：{int(p['renown'])}｜称号：{title}\n🌤️ 季节：{season}｜效果：{effect}"
+
+    def travel(self, user_id: str, name: str, current_group_id: str, target: str) -> str:
+        if not bool(self.cfg("world_travel_enabled",None,True)): return "🧭 世界旅行系统当前关闭。"
+        p,_=self.ensure_player(current_group_id,user_id,name)
+        target=(target or "").strip()
+        target_id=target if target in WORLD_REGIONS else next((rid for rid,v in WORLD_REGIONS.items() if v["name"]==target),None)
+        if not target_id:return "❌ 找不到这个地区。输入 `/地图` 查看可旅行地区。"
+        current_id=str(p["world_region_id"] or self._group_region_id(current_group_id) or "starter")
+        if current_id not in WORLD_REGIONS:current_id="starter"
+        if current_id==target_id:return f"🧭 你已经在【{WORLD_REGIONS[target_id]['name']}】。"
+        now=utc_ts(); cd=max(0,int(self.cfg("world_travel_cooldown_seconds",None,600))); last=int(p["world_travel_at"] or 0)
+        if last+cd>now:return f"⏳ 旅行冷却中，还需 {last+cd-now} 秒。"
+        src=WORLD_REGIONS[current_id]; dst=WORLD_REGIONS[target_id]
+        base=max(0,int(self.cfg("world_travel_base_cost",None,60))); cost=min(600,base+abs(int(src["tier"])-int(dst["tier"]))*35+int(dst["fare"]))
+        if int(p["coins"])<cost:return f"💰 金币不足，前往【{dst['name']}】需要 {cost} 金币。当前：{int(p['coins'])}。"
+        self.db.wallet_change("__GLOBAL_USER__",user_id,coins_delta=-cost,kind="world_travel",note=f"{src['name']}→{dst['name']}")
+        raw=self.db.raw if hasattr(self.db,"raw") else self.db
+        raw.set_global_player_fields(user_id,{"world_region_id":target_id,"world_travel_at":now,"faction":dst["faction"] if str(p["faction"] or "中立")=="中立" else p["faction"]})
+        groups=raw.get_groups_by_region(target_id)
+        group_hint=f"\n🏘️ 该地区当前有 {len(groups)} 个驻点群。" if groups else "\n🏘️ 目前还没有群聊驻点。"
+        return f"🧭【旅行完成】\n你已从【{src['name']}】前往【{dst['name']}】。\n💰 旅行花费：{cost} 金币{group_hint}\n提示：旅行会保存你的全局世界坐标；进入该地区驻点群后，就能参与当地玩法。"
 
     def _active_world_event(self, group_id: str) -> dict[str, Any] | None:
         try:
@@ -360,7 +449,8 @@ class WorldEngine:
             f"❤️ 体力：{player['stamina']}/{player['max_stamina']}\n"
             f"🫀 战斗生命：{player['hp']}/{player['max_hp']}\n"
             f"🍀 幸运：{player['luck']}\n"
-            f"⭐ 声望：{player['renown']}\n"
+            f"⭐ 声望：{player['renown']}（{self.renown_title(int(player['renown']))}）\n"
+            f"🧭 世界坐标：{WORLD_REGIONS.get(str(player['world_region_id'] or ''), WORLD_REGIONS['starter'])['name']}\n"
             f"⚔️ 装备攻击：{equip['attack']}\n"
             f"🛡️ 装备防御：{equip['defense']}\n"
             f"📅 连续签到：{player['streak']} 天\n"
@@ -400,6 +490,7 @@ class WorldEngine:
         coins += streak_bonus
         coins += max(0, int(self._event_effect(group_id, "checkin_bonus_coins", 0) or 0))
         self.db.wallet_change(group_id, user_id, coins_delta=coins, kind="checkin", note=f"连续签到{streak}天")
+        self.add_renown(user_id,int(self.cfg("world_reputation_checkin",None,5)),"每日签到")
         self.db.execute(
             "UPDATE players SET streak=?,total_checkin=total_checkin+1,last_checkin=?,title=?,updated_at=? WHERE group_id=? AND user_id=?",
             (streak, today, self.level_title(player["level"]), datetime.now(timezone.utc).isoformat(timespec="seconds"), "__GLOBAL_USER__", user_id),
@@ -527,6 +618,15 @@ class WorldEngine:
                 (datetime.now(timezone.utc).isoformat(timespec="seconds"), "__GLOBAL_USER__", user_id),
             )
         self.db.progress_task(group_id, user_id, day, "explore", 1)
+        # 季节只给轻量修正，避免世界季节把经济数值拉爆。
+        season,_effect=self.season_info()
+        season_mult=1.05 if season in {"春季","秋季"} else 1.0
+        if season_mult>1:
+            bonus=max(0,int(coins_gain*(season_mult-1)))
+            if bonus:
+                self.db.wallet_change(group_id,user_id,coins_delta=bonus,kind="season_bonus",note=season)
+                coins_gain += bonus
+        self.add_renown(user_id,int(self.cfg("world_reputation_explore",None,3)),"完成探索")
         self.db.update_player_metrics(group_id, user_id, total_explores=1)
         self.db.log_action(group_id, user_id, "explore", f"mode={mode},location={loc[0]}")
         achievement = None
@@ -726,26 +826,39 @@ class WorldEngine:
 
     def _spawn_monster(self,group_id:str,user_id:str)->str:
         templates=self._monster_templates(group_id)
-        choices=list(templates.items())
-        monster_id, monster_base=random.choice(choices)
-        monster=dict(monster_base); monster.setdefault("id",monster_id)
         p,_=self.ensure_player(group_id,user_id,"冒险者")
-        scale=1+max(0,int(p["level"])-1)*0.025
-        row_group = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
-        max_count = int(row_group["monster_max_count"] if row_group and row_group["monster_max_count"] is not None else self.cfg("explore_monster_max_count", group_id, 3))
-        multi_chance = float(row_group["monster_multi_chance_percent"] if row_group and row_group["monster_multi_chance_percent"] is not None else self.cfg("explore_monster_multi_chance_percent", group_id, 28))
-        count = 1
-        if max_count > 1 and random.random() * 100 < max(0, min(100, multi_chance)):
-            count = random.randint(2, max(2, min(max_count, 3)))
-        monster["hp"]=max(1,int(monster["hp"]*scale*count)); monster["attack"]=max(1,int(monster["attack"]*scale*(1+0.08*(count-1))))
-        monster["coins"]=max(0,int(monster.get("coins",0)*count)); monster["exp"]=max(0,int(monster.get("exp",0)*count))
-        if isinstance(monster.get("items"),dict): monster["items"]={k:int(v)*count for k,v in monster["items"].items()}
-        if count>1:
-            monster["name"]=f"{monster['name']}群 ×{count}"
+        level=max(1,min(80,int(p["level"] or 1)))
+        group=self.db.raw.get_group(group_id) if hasattr(self.db,"raw") else self.db.get_group(group_id)
+        region_tier=int(WORLD_REGIONS.get(self._group_region_id(group_id),WORLD_REGIONS["starter"]).get("tier",1))
+        eligible=[]
+        for mid,base in templates.items():
+            if not isinstance(base,dict): continue
+            min_level=max(1,int(base.get("min_level",1) or 1))
+            if min_level<=level+max(1,region_tier*2): eligible.append((mid,base))
+        choices=eligible or list(templates.items())
+        monster_id,monster_base=random.choice(choices)
+        monster=dict(monster_base); monster.setdefault("id",monster_id)
+        scale=1+min(1.0,max(0,level-1))*0.018
+        max_count=int(group["monster_max_count"] if group and group["monster_max_count"] is not None else self.cfg("explore_monster_max_count",group_id,2))
+        multi_chance=float(group["monster_multi_chance_percent"] if group and group["monster_multi_chance_percent"] is not None else self.cfg("explore_monster_multi_chance_percent",group_id,18))
+        count=1
+        if max_count>1 and random.random()*100<max(0,min(35,multi_chance)):
+            count=random.randint(2,min(max_count,2))
+        monster["hp"]=min(COMBAT_LIMITS["monster_hp"],max(80,int(monster.get("hp",100)*scale*count)))
+        monster["attack"]=min(COMBAT_LIMITS["monster_attack"],max(8,int(monster.get("attack",20)*scale*(1+0.04*(count-1)))))
+        monster["defense"]=min(COMBAT_LIMITS["monster_defense"],max(0,int(monster.get("defense",0)*min(1.25,scale))))
+        monster["coins"]=min(2500,max(0,int(monster.get("coins",0)*min(2.0,1+0.015*(level-1))*count)))
+        monster["exp"]=min(1400,max(20,int(monster.get("exp",20)*min(2.0,1+0.015*(level-1))*count)))
+        if isinstance(monster.get("items"),dict): monster["items"]={k:min(6,int(v)*count) for k,v in monster["items"].items()}
+        if count>1: monster["name"]=f"{monster['name']}群 ×{count}"
         monster["enemy_count"]=count
+        safe_skills=[]
+        for sk in (monster.get("skills") or [])[:3]:
+            if not isinstance(sk,dict) or not sk.get("name"): continue
+            safe_skills.append({**sk,"multiplier":min(1.35,max(0.9,float(sk.get("multiplier",1.0) or 1.0))),"chance":min(30,max(0,float(sk.get("chance",0) or 0))),"aoe":bool(sk.get("aoe",False))})
+        monster["skills"]=safe_skills
         encounter_id=self.db.raw.create_monster_encounter(group_id,user_id,monster,utc_ts()+int(self.cfg("monster_encounter_minutes",group_id,15))*60) if hasattr(self.db,"raw") else self.db.create_monster_encounter(group_id,user_id,monster,utc_ts()+900)
-        skills = monster.get("skills") or []
-        skill_note = f"\n✨ 特性：{skills[0].get('name')}（敌人有概率施放）" if skills and isinstance(skills[0], dict) else ""
+        skill_note=f"\n✨ 特性：{safe_skills[0].get('name')}（敌人有概率施放）" if safe_skills else ""
         return f"👹【遭遇战 #{encounter_id}】\n{monster['name']} 出现了！\n❤️ HP：{monster['hp']}\n⚔️ 攻击：{monster['attack']}｜🛡️ 防御：{monster.get('defense',0)}{skill_note}\n\n输入 `/攻击怪物` 普攻，或 `/技能使用 技能名`。\n15 分钟内不战斗，怪物会逃跑。"
 
     def monster_flee(self,group_id:str,user_id:str,name:str)->str:
@@ -777,17 +890,22 @@ class WorldEngine:
         if p["stamina"]<cost: return Result(f"❤️ 体力不足，需要 {cost}。")
         if cost: self.db.change_stamina(group_id,user_id,-cost)
         eq=self.db.get_equipped_stats(group_id,user_id); pet=self.db.get_active_pet(group_id,user_id)
-        base=random.randint(45,75)+int(p["level"])*16+eq["attack"]+(int(pet["attack"])*2 if pet else 0)
-        multiplier=float(skill.get("power",1.0))
+        safe_eq_attack=min(180,max(0,int(eq.get("attack",0))))
+        pet_attack=min(50,max(0,int(pet["attack"]) if pet else 0))
+        soft_level=min(60,max(1,int(p["level"] or 1)))
+        base=random.randint(40,65)+soft_level*12+safe_eq_attack+pet_attack
+        multiplier=min(1.95,max(0.8,float(skill.get("power",1.0) or 1.0)))
         if skill.get("type") == "aoe":
-            multiplier *= float(skill.get("aoe_ratio",0.85) or 0.85) + 0.15
-        hits=max(1,int(skill.get("hits",1)))
+            multiplier *= min(1.0,max(0.75,float(skill.get("aoe_ratio",0.85) or 0.85)))
+        hits=min(2,max(1,int(skill.get("hits",1))))
         damage=0; crit_count=0
+        crit_chance=min(0.25,max(0.03,0.08+float(p["luck"])/800))
         for _ in range(hits):
-            hit=max(1,int(base*multiplier)-int(row["defense"]))
-            if random.random()<0.08+float(p["luck"])/600:
-                hit*=2; crit_count+=1
-            damage += hit
+            hit=max(1,int(base*multiplier)-min(40,int(row["defense"])))
+            if random.random()<crit_chance:
+                hit=int(hit*1.75); crit_count+=1
+            damage += min(190,hit)
+        damage=min(COMBAT_LIMITS["player_damage"],damage)
         # 防御技能的核心价值是降低本回合即将到来的怪物反击，而不是造成伤害。
         if skill.get("type") == "guard":
             damage=0
@@ -826,8 +944,9 @@ class WorldEngine:
             available=[x for x in enemy_skills if isinstance(x,dict) and str(x.get("name"))]
             weighted=[x for x in available if random.random()*100 < max(0,min(100,float(x.get("chance",0) or 0)))]
             enemy_skill=random.choice(weighted) if weighted else None
-        base_taken=max(1,int(row["attack"]*random.uniform(.75,1.1))-defense//3)
-        taken=max(1,int(base_taken*float(enemy_skill.get("multiplier",1.0))) if enemy_skill else base_taken)
+        base_taken=max(1,int(min(COMBAT_LIMITS["monster_attack"],int(row["attack"]))*random.uniform(.75,1.05))-min(90,defense)//3)
+        taken=max(1,int(base_taken*min(1.35,float(enemy_skill.get("multiplier",1.0) or 1.0))) if enemy_skill else base_taken)
+        taken=min(COMBAT_LIMITS["monster_skill_hit"] if enemy_skill else COMBAT_LIMITS["monster_hit"],taken)
         enemy_text=f"✨ 【{enemy_skill['name']}】！{enemy_skill.get('text','')}" if enemy_skill else ""
         if skill.get("type") == "guard":
             taken=max(1,int(taken*0.45))
@@ -849,7 +968,7 @@ class WorldEngine:
                     hit=taken
                 else:
                     other_eq=raw.get_equipped_stats(group_id,uid) if hasattr(raw,"get_equipped_stats") else {"defense":0}
-                    hit=max(1,taken-int(other_eq.get("defense",0))//5)
+                    hit=min(COMBAT_LIMITS["aoe_hit"],max(1,taken-min(80,int(other_eq.get("defense",0)))//5))
                 self.db.change_hp(group_id,uid,-hit)
                 affected=raw.get_player("__GLOBAL_USER__",uid) if hasattr(raw,"get_player") else None
                 if affected and int(affected["hp"])<=0 and uid!=user_id:
@@ -871,18 +990,26 @@ class WorldEngine:
 
     def _skill_damage(self, player, eq, pet, skill_id, equipped, target_defense=0):
         skill=SKILLS[skill_id]
-        base=random.randint(45,75)+int(player["level"])*16+eq["attack"]+(int(pet["attack"])*2 if pet else 0)
-        damage=max(1,int(base*float(skill.get("power",1.0)))-int(target_defense))
-        crit=random.random()<0.08+player["luck"]/600
-        if crit: damage*=2
+        soft_level=min(60,max(1,int(player["level"] or 1)))
+        safe_eq_attack=min(180,max(0,int(eq.get("attack",0))))
+        safe_pet_attack=min(50,max(0,int(pet["attack"]) if pet else 0))
+        base=random.randint(40,65)+soft_level*12+safe_eq_attack+safe_pet_attack
+        power=min(1.95,max(0.8,float(skill.get("power",1.0) or 1.0)))
+        hits=min(2,max(1,int(skill.get("hits",1) or 1)))
+        damage=max(1,int(base*power))-min(90,max(0,int(target_defense)))
+        damage=max(1,damage*hits)
+        crit_chance=min(0.25,max(0.03,0.08+float(player["luck"] or 0)/800))
+        crit=random.random()<crit_chance
+        if crit: damage=int(damage*1.75)
         bond=1.0; bond_text=''
         if bool(self.cfg("skill_bond_enabled",None,True)):
-            if skill_id=="火球" and "重击" in equipped: bond=1.15; bond_text='🔥火焰羁绊 +15%'
-            elif skill_id=="冰枪" and "雷击" in equipped: bond=1.12; bond_text='❄️⚡冰雷羁绊 +12%'
-            elif skill_id=="毒刃" and "连斩" in equipped: bond=1.18; bond_text='☠️连毒羁绊 +18%'
-            elif skill_id=="吸血" and "护盾" in equipped: bond=1.12; bond_text='🩸守护羁绊 +12%'
-            elif skill_id=="雷击" and "火球" in equipped: bond=1.10; bond_text='⚡🔥超载羁绊 +10%'
-        return max(1,int(damage*bond)),crit,bond_text
+            if skill_id=="火球" and "重击" in equipped: bond=1.10; bond_text='🔥火焰羁绊 +10%'
+            elif skill_id=="冰枪" and "雷击" in equipped: bond=1.08; bond_text='❄️⚡冰雷羁绊 +8%'
+            elif skill_id=="毒刃" and "连斩" in equipped: bond=1.10; bond_text='☠️连毒羁绊 +10%'
+            elif skill_id=="吸血" and "护盾" in equipped: bond=1.08; bond_text='🩸守护羁绊 +8%'
+            elif skill_id=="雷击" and "火球" in equipped: bond=1.08; bond_text='⚡🔥超载羁绊 +8%'
+        damage=min(COMBAT_LIMITS["player_damage"],max(1,int(damage*bond)))
+        return damage,crit,bond_text
 
     def boss_use_skill(self, group_id:str, user_id:str, name:str, skill_id:str)->Result:
         group=self.db.get_group(group_id)
@@ -918,8 +1045,9 @@ class WorldEngine:
                 ("寒霜领域", 1.30, "范围减伤压制！"),
                 ("地狱烈焰", 1.70, "爆发范围灼烧！"),
             ])
-            taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
-            taken=int(taken*boss_skill[1])
+            taken=max(1,int(min(COMBAT_LIMITS["local_boss_hp"],int(group["boss_hp"]))*0.0003)+random.randint(4,12)-min(120,int(eq.get("defense",0)))//5)
+            taken=int(taken*min(1.45,float(boss_skill[1])))
+            taken=min(65,taken)
             boss_skill_text=f" 🐉 Boss 施放【{boss_skill[0]}】造成{boss_skill[2]}"
             # Hit up to three currently active group members, but always include the acting player.
             raw=self.db.raw if hasattr(self.db, "raw") else self.db
@@ -950,7 +1078,8 @@ class WorldEngine:
                     extra_lines.append(f"• 影响了 {uid}：-{hit} HP")
             group_extra = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
         else:
-            taken=max(1,int(group["boss_hp"]*0.0005)+random.randint(6,18)-eq["defense"]//4)
+            taken=max(1,int(min(COMBAT_LIMITS["local_boss_hp"],int(group["boss_hp"]))*0.0003)+random.randint(4,12)-min(120,int(eq.get("defense",0)))//5)
+            taken=min(45,taken)
             if SKILLS[skill_id].get("type") == "guard":
                 taken=max(1,int(taken*0.45))
             group_extra = ""
@@ -1378,7 +1507,7 @@ class WorldEngine:
             profile = dict(profiles[key]) if isinstance(profiles[key], dict) else None
         names = ["远古黑龙", "深渊巨兽", "熔岩领主", "虚空魔神", "冰霜女王"]
         name = str((profile or {}).get("name") or boss_name or random.choice(names))
-        hp = max(1, int((profile or {}).get("hp", self.cfg("boss_max_hp", group_id, 100000))))
+        hp = min(COMBAT_LIMITS["local_boss_hp"], max(3000, int((profile or {}).get("hp", self.cfg("boss_max_hp", group_id, 12000)))))
         if profile is not None:
             profile["name"] = name
             profile["hp"] = hp
@@ -1392,7 +1521,7 @@ class WorldEngine:
             boss_max_hp=hp,
             boss_profile_json=json.dumps(profile or {}, ensure_ascii=False),
             boss_started_at=now.isoformat(timespec="seconds"),
-            boss_ends_at=(now.timestamp() + int((profile or {}).get("duration_hours", self.cfg("boss_duration_hours", group_id, 4))) * 3600),
+            boss_ends_at=(now.timestamp() + min(8,max(1,int((profile or {}).get("duration_hours", self.cfg("boss_duration_hours", group_id, 4))))) * 3600),
             last_boss_at=now.isoformat(timespec="seconds"),
         )
         desc = str((profile or {}).get("description") or "")
@@ -1418,16 +1547,16 @@ class WorldEngine:
             boss_profile = json.loads(str(group["boss_profile_json"] or "{}"))
         except Exception:
             boss_profile = {}
-        base = int(boss_profile.get("damage_base", self.cfg("boss_damage_base", group_id, 80)))
-        damage = random.randint(max(1, base // 2), base * 2) + player["level"] * 18 + equip["attack"] + pet_atk * 3
+        base = min(70,max(20,int(boss_profile.get("damage_base", self.cfg("boss_damage_base", group_id, 45)))))
+        damage = random.randint(max(1, base // 2), base * 2) + min(60,int(player["level"])) * 12 + min(180,int(equip.get("attack",0))) + min(50,int(pet_atk))*2
         if player["profession"] == "战士":
-            damage = int(damage * 1.2)
-        if random.random() < 0.08 + player["luck"] / 500:
-            damage *= 2
+            damage = int(damage * 1.10)
+        if random.random() < min(0.25,0.08 + float(player["luck"] or 0) / 800):
+            damage = int(damage * 1.75)
             crit = True
         else:
             crit = False
-        damage = max(1, damage)
+        damage = min(COMBAT_LIMITS["boss_damage"], max(1, damage))
         new_hp = max(0, int(group["boss_hp"]) - damage)
         self.db.update_group(group_id, boss_hp=new_hp)
         self.db.add_boss_damage(group_id, user_id, damage)
@@ -1538,8 +1667,8 @@ class WorldEngine:
             raw.set_global_player_fields(user_id,{"luck":min(9999,int(player["luck"])+3)})
             return f"🔮 {npc['name']} 为你占卜：幸运 +3！\n当前幸运：{int(player['luck'])+3}"
         if reward=="renown":
-            raw.set_global_player_fields(user_id,{"renown":min(999999,int(player["renown"])+20)})
-            return f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{int(player['renown'])+20}"
+            current=self.add_renown(user_id,20,"帮助 NPC")
+            return f"🏅 收藏家被你的收藏打动了！声望 +20。\n当前声望：{current}｜称号：{self.renown_title(current)}"
         gain=random.randint(120,320); raw.change_exp(group_id,user_id,gain)
         return f"📖 你和 {npc['name']} 聊了很久，获得 {gain} EXP。\n这次聊天已记录。"
 
@@ -1614,42 +1743,42 @@ class WorldEngine:
         raw.log_world_event(group_id,"world_event",event["title"],event["description"],None,event.get("weather"),None)
         return f"🌎【世界事件：{event['title']}】\n{event['description']}\n\n⏳ 持续约 {max(1,int(event.get('duration',60)))} 分钟。\n输入 `/世界` 查看当前世界状态。"
 
+    def world_settings_text(self, group_id: str) -> str:
+        group = self.db.raw.get_group(group_id) if hasattr(self.db, "raw") else self.db.get_group(group_id)
+        if not group:
+            return "❌ 当前群还没有初始化世界地区。请先发送一次 `/世界`。"
+        rid = self._group_region_id(group_id)
+        region = WORLD_REGIONS.get(rid, WORLD_REGIONS["starter"])
+        faction = str(group["world_faction"] or region["faction"] or "中立")
+        season, effect = self.season_info()
+        enabled = bool(group["world_event_enabled"])
+        return (
+            "⚙️【群聊世界设置】\n"
+            f"群 ID：{group_id}\n"
+            f"地区：{region['name']}（{rid}）｜危险等级 {region['tier']}\n"
+            f"阵营：{faction}\n"
+            f"天气：{group['world_weather']}\n"
+            f"世界事件：{'开启' if enabled else '关闭'}\n"
+            f"当前季节：{season}｜{effect}\n\n"
+            "管理员命令：\n"
+            "`/世界设置 地区 地区名`\n"
+            "`/世界设置 阵营 王国/联盟/深渊/自然/中立`\n"
+            "`/世界设置 天气 天气名`\n"
+            "`/世界设置 事件 开启|关闭`\n"
+            "`/世界设置 重置`"
+        )
+
     def world_status(self, group_id: str) -> str:
         group = self.db.get_group(group_id)
         if not group:
             self.db.upsert_group(group_id)
             group = self.db.get_group(group_id)
+        region_id=self._group_region_id(group_id); region=WORLD_REGIONS.get(region_id,WORLD_REGIONS["starter"]); season,effect=self.season_info()
         boss_line = "无" if not group["boss_active"] else f"{group['boss_name']}（HP {fmt_num(group['boss_hp'])}/{fmt_num(group['boss_max_hp'])}）"
-        event=self._active_world_event(group_id)
-        event_line = "无" if not event else f"{event['key']}（剩余约 {max(1,(event['expires_at']-int(datetime.now(timezone.utc).timestamp()))//60)} 分钟）"
-        npc=self.db.raw.get_current_npc(group_id) if hasattr(self.db,"raw") else self.db.get_current_npc(group_id)
-        npc_line = "无" if not npc else f"{npc['name']} · {npc['role']}"
-        return (
-            "🌎 【群聊世界】\n"
-            f"天气：{group['world_weather']}\n"
-            f"地点：{group['world_location']}\n"
-            f"当前事件：{event_line}\n"
-            f"随机 NPC：{npc_line}\n"
-            f"世界 Boss：{boss_line}\n"
-            "\n"
-            "🎮 推荐：/签到 /探索 /游戏 /宠物 /商店 /排行榜\n"
-            "📖 完整帮助：/帮助"
-        )
-
-    def transfer(self, group_id: str, sender_id: str, target_id: str, amount: int, sender_name: str) -> str:
-        if sender_id == target_id:
-            return "❌ 不能给自己转账。"
-        amount = max(1, min(amount, int(self.cfg("transfer_max_coins", group_id, 1_000_000))))
-        sender, _ = self.ensure_player(group_id, sender_id, sender_name)
-        target = self.db.get_player(group_id, target_id)
-        if not target:
-            return "❌ 对方还没有注册群聊世界。"
-        if sender["coins"] < amount:
-            return "💰 余额不足。"
-        self.db.wallet_change(group_id, sender_id, coins_delta=-amount, kind="transfer_out", note=f"转给{target_id}")
-        self.db.wallet_change(group_id, target_id, coins_delta=amount, kind="transfer_in", note=f"来自{sender_id}")
-        return f"💸 转账成功！\n发送：{sender['name']} → {target['name']}\n金额：{fmt_num(amount)} 金币"
-
+        event=self._active_world_event(group_id); event_line = "无" if not event else f"{event['key']}（剩余约 {max(1,(event['expires_at']-int(datetime.now(timezone.utc).timestamp()))//60)} 分钟）"
+        npc=self.db.raw.get_current_npc(group_id) if hasattr(self.db,"raw") else self.db.get_current_npc(group_id); npc_line="无" if not npc else f"{npc['name']} · {npc['role']}"
+        faction=str(group["world_faction"] or region["faction"] or "中立")
+        return ("🌎【群聊世界 2.0】\n" f"地区：{region['name']}｜危险等级 {region['tier']}\n" f"阵营：{faction}\n" f"天气：{group['world_weather']}\n" f"季节：{season}｜{effect}\n" f"当前事件：{event_line}\n" f"随机 NPC：{npc_line}\n" f"世界 Boss：{boss_line}\n\n" "🗺️ `/地图` 查看跨群世界\n" "🧭 `/旅行 地区名` 移动世界坐标\n" "⭐ `/声望` 查看世界声望\n" "🎯 `/悬赏` 查看或发布玩家悬赏\n" "🌍 `/大世界Boss` 查看全服 Boss")
 
     def use_item(self, group_id: str, user_id: str, name: str, item_id: str, qty: int = 1) -> Result:
         self.ensure_player(group_id, user_id, name)
@@ -1705,10 +1834,10 @@ class WorldEngine:
         effects = self.json_cfg("cloud_shop_effects_json", group_id)
         effect = effects.get(item_id) if isinstance(effects, dict) else None
         if isinstance(effect, dict):
-            hp_gain = max(0, int(effect.get("heal_hp", 0) or 0))
-            stamina_gain = max(0, int(effect.get("heal_stamina", 0) or 0))
-            coins_gain = max(0, int(effect.get("add_coins", 0) or 0))
-            exp_gain = max(0, int(effect.get("add_exp", 0) or 0))
+            hp_gain = min(1000, max(0, int(effect.get("heal_hp", 0) or 0)))
+            stamina_gain = min(1000, max(0, int(effect.get("heal_stamina", 0) or 0)))
+            coins_gain = min(5000, max(0, int(effect.get("add_coins", 0) or 0)))
+            exp_gain = min(1000, max(0, int(effect.get("add_exp", 0) or 0)))
             if hp_gain or stamina_gain or coins_gain or exp_gain:
                 self.db.add_item("__GLOBAL_USER__", user_id, item_id, str(item["item_name"]), -qty)
                 if hp_gain: self.db.change_hp(group_id, user_id, hp_gain * qty)
@@ -1723,16 +1852,204 @@ class WorldEngine:
                 return Result(f"✅ 使用【{item['item_name']}】×{qty}：" + "、".join(parts))
         return Result("❌ 这个物品目前不能直接使用。")
 
+    def bounty_list(self, limit: int = 12) -> str:
+        rows=self.db.raw.get_bounties("open",limit) if hasattr(self.db,"raw") else self.db.get_bounties("open",limit)
+        if not rows:return "🎯【悬赏大厅 2.0】\n\n目前没有开放中的玩家悬赏。\n发布：`/悬赏 发布 GW-XXXXXXXXXX 500 标题/内容`"
+        lines=["🎯【悬赏大厅 2.0】","","正式跨群决斗悬赏："]
+        for r in rows:
+            target_uid=str(r["target_player_uid"] or "")
+            publisher=str(r["publisher_name"] or r["created_by"] or "系统")
+            left="不限" if int(r["expires_at"] or 0)==0 else f"{max(0,int(r['expires_at'])-utc_ts())//3600}小时"
+            rewards=[]
+            if int(r["reward_coins"] or 0): rewards.append(f"💰{fmt_num(int(r['reward_coins']))}")
+            if int(r["reward_gems"] or 0): rewards.append(f"💎{fmt_num(int(r['reward_gems']))}")
+            if int(r["reward_exp"] or 0): rewards.append(f"⭐{fmt_num(int(r['reward_exp']))}EXP")
+            try: items=json.loads(str(r["reward_items_json"] or "[]"))
+            except Exception: items=[]
+            for item in items[:4] if isinstance(items,list) else []:
+                if isinstance(item,dict): rewards.append(f"🎒{str(item.get('item_name') or item.get('item_id') or '物品')[:24]}×{int(item.get('qty') or 1)}")
+            reward_text=" · ".join(rewards) or "无奖励"
+            lines.append(f"#{r['id']}｜目标 {target_uid or r['target_name'] or '指定玩家'}｜{reward_text}\n发布者：{publisher}｜状态：开放｜剩余：{left}\n{str(r['title'])[:70]}\n接取：`/悬赏 领取 {r['id']}`")
+        lines.append("\n详情：`/悬赏 详情 ID`｜我的：`/悬赏 我的`｜取消自己的悬赏：`/悬赏 取消 ID`")
+        return "\n".join(lines)
+
+    def bounty_detail(self, bounty_id: int) -> str:
+        row=self.db.raw.get_bounty(int(bounty_id)) if hasattr(self.db,"raw") else self.db.get_bounty(int(bounty_id))
+        if not row:return "❌ 找不到这个悬赏。"
+        labels={"open":"开放","challenge":"等待目标接受","dueling":"决斗中","completed":"已完成","expired":"已过期","cancelled":"已取消"}
+        lines=[f"🎯【悬赏 #{row['id']}】",f"标题：{row['title']}",f"内容：{row['description'] or '正式跨群决斗'}",f"目标 UID：{row['target_player_uid'] or '—'}｜目标：{row['target_name'] or '指定玩家'}",f"发布者：{row['publisher_name'] or '系统'}",f"奖励：💰 {fmt_num(int(row['reward_coins']))}",f"状态：{labels.get(row['status'],row['status'])}",f"失败/拒绝次数：{int(row['failed_attempts'] or 0)}"]
+        if row["status"]=="challenge":lines.append(f"挑战者：{row['claimed_by_name'] or row['claimed_by_user_id']}｜等待 {max(0,int(row['challenge_expires_at'])-utc_ts())} 秒")
+        if row["status"]=="open":lines.append(f"可接取：`/悬赏 领取 {row['id']}`")
+        return "\n".join(lines)
+
+
+    def create_direct_duel_for_bounty(self, bounty_id: int, timeout: int = 120) -> tuple[str, dict|None]:
+        row=self.db.raw.get_bounty(int(bounty_id)) if hasattr(self.db,'raw') else self.db.get_bounty(int(bounty_id))
+        if not row or row['status']!='dueling': return "❌ 这个悬赏当前不能进入决斗。",None
+        target=str(row['target_user_id'] or ''); claimant=str(row['claimed_by_user_id'] or '')
+        if not target or not claimant or target==claimant: return "❌ 悬赏目标或挑战者无效。",None
+        if self.db.raw.get_active_duel_for_user(target) or self.db.raw.get_active_duel_for_user(claimant): return "⏳ 目标或挑战者当前已经在其他决斗中，请稍后再试。",None
+        p1=self.db.raw.get_player('__GLOBAL_USER__',claimant); p2=self.db.raw.get_player('__GLOBAL_USER__',target)
+        if not p1 or not p2:return "❌ 找不到悬赏双方玩家。",None
+        if int(p1['death_state'] or 0) or int(p2['death_state'] or 0):return "💀 决斗双方必须处于存活状态，无法发起悬赏决斗。",None
+        p1_group=str(row['claimed_group_id'] or ''); p1_origin=str(row['claimed_origin'] or '')
+        target_groups=self.db.raw.get_user_groups(target)
+        p2_group=str(target_groups[0]['group_id']) if target_groups else str(row['target_group_id'] or '')
+        p2_origin=''
+        if target_groups:
+            g=self.db.raw.get_group(p2_group)
+            p2_origin=str(g['session_origin'] or '') if g else ''
+        if not p1_group or not p1_origin or not p2_group or not p2_origin:return "❌ 无法找到双方当前有效群聊会话，暂时不能开战。"
+        a=self._duel_stats(claimant); b=self._duel_stats(target)
+        now=utc_ts(); starter=claimant if int(a['speed'])>=int(b['speed']) else target
+        battle_id=self.db.raw.create_duel_battle({'user_id':claimant,'group_id':p1_group,'origin':p1_origin,'name':row['claimed_by_name'] or p1['name'],'max_hp':int(a['max_hp'])},{'user_id':target,'group_id':p2_group,'origin':p2_origin,'name':row['target_name'] or p2['name'],'max_hp':int(b['max_hp'])},starter,now+max(30,int(timeout)),int(bounty_id))
+        self.db.raw.attach_bounty_duel(int(bounty_id),battle_id)
+        battle=self.db.raw.get_duel(battle_id)
+        return f"⚔️【悬赏决斗成立】\n悬赏 #{bounty_id}：{row['title']}\n挑战者：{row['claimed_by_name'] or p1['name']}\n目标：{row['target_name'] or p2['name']}\n先手：{'挑战者' if starter==claimant else '目标'}\n\n请按普通决斗规则行动：`/决斗攻击`、`/决斗技能` 或 `/决斗防御`。",battle
+
+    def global_boss_status(self) -> str:
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        b=raw.get_global_boss()
+        if not int(b['active']):
+            last=int(b['last_finished_at'] or 0)
+            return f"🌍【大世界 Boss】当前没有活动 Boss。\n下次可由管理员手动召唤，或根据自动召唤配置定时出现。\n" + (f"上次结束：{datetime.fromtimestamp(last,timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')}" if last else '')
+        hp=max(0,int(b['hp'])); mx=max(1,int(b['max_hp'])); ratio=hp/mx; blocks=max(0,min(10,int(ratio*10)))
+        lines=[f"🌍🐉【大世界 Boss】{b['name']}",f"📖 {b['description'] or '所有群聊中的玩家都可以共同挑战。'}",f"❤️ HP：{fmt_num(hp)} / {fmt_num(mx)}",f"{'🟩'*blocks}{'⬜'*(10-blocks)} {ratio:.0%}"]
+        if int(b['ends_at']):lines.append(f"⏳ 剩余：{max(0,int(b['ends_at'])-utc_ts())//60} 分钟")
+        ranking=raw.get_global_boss_ranking(10)
+        if ranking:
+            lines.append("\n🏆 全服贡献榜：")
+            for i,r in enumerate(ranking,1): lines.append(f"{i}. {r['name']}｜{fmt_num(int(r['damage']))} 伤害｜{int(r['attacks'])} 次")
+        lines.append("\n所有群聊共享同一个 Boss HP 与贡献榜。\n输入 `/大世界Boss 攻击` 参加战斗。")
+        return "\n".join(lines)
+
+    def spawn_global_boss(self, force: bool=False) -> str:
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        b=raw.get_global_boss()
+        if int(b['active']) and not force:return "🌍🐉 当前已经有大世界 Boss，不能重复召唤。"
+        profile=self.json_cfg('global_boss_profile_json',None,{})
+        name=str(profile.get('name') or self.cfg('global_boss_name',None,'灭世古龙'))
+        desc=str(profile.get('description') or self.cfg('global_boss_description',None,'来自深渊的古龙跨越世界边界出现，所有群聊玩家都可以共同挑战。'))
+        # Boss 运行时硬上限，配置再大也只能按平衡后的数值运行。
+        hp=min(120000,max(6000,int(profile.get('max_hp',self.cfg('global_boss_max_hp',None,30000)))))
+        now=utc_ts(); duration=min(12,max(1,int(profile.get('duration_hours',self.cfg('global_boss_duration_hours',None,6)))))
+        attack=min(140,max(25,int(profile.get('attack',self.cfg('global_boss_attack',None,90)))))
+        defense=min(90,max(0,int(profile.get('defense',self.cfg('global_boss_defense',None,45)))))
+        skill_chance=min(35,max(0,int(profile.get('skill_chance_percent',self.cfg('global_boss_skill_chance_percent',None,18)))))
+        cooldown=min(60,max(5,int(profile.get('attack_cooldown_seconds',self.cfg('global_boss_attack_cooldown_seconds',None,8)))))
+        stamina=min(40,max(5,int(profile.get('stamina_cost',self.cfg('global_boss_stamina_cost',None,12)))))
+        participation=min(1000,max(0,int(profile.get('participation_reward',self.cfg('global_boss_participation_reward',None,100)))))
+        pool_coins=min(120000,max(0,int(profile.get('reward_pool_coins',self.cfg('global_boss_reward_pool_coins',None,60000)))))
+        pool_gems=min(150,max(0,int(profile.get('reward_pool_gems',self.cfg('global_boss_reward_pool_gems',None,60)))))
+        exp_rate=min(80,max(0,int(profile.get('exp_per_1000_damage',self.cfg('global_boss_exp_per_1000_damage',None,20)))))
+        enrage=min(60,max(10,int(profile.get('enrage_threshold_percent',self.cfg('global_boss_enrage_threshold_percent',None,30)))))
+        enrage_mult=min(2.0,max(1.0,float(profile.get('enrage_multiplier',self.cfg('global_boss_enrage_multiplier',None,1.35)))))
+        raw.reset_global_boss_damage()
+        raw.update_global_boss(active=1,name=name,description=desc,hp=hp,max_hp=hp,attack=attack,defense=defense,skill_chance_percent=skill_chance,duration_hours=duration,attack_cooldown_seconds=cooldown,stamina_cost=stamina,participation_reward=participation,reward_pool_coins=pool_coins,reward_pool_gems=pool_gems,exp_per_1000_damage=exp_rate,enrage_threshold_percent=enrage,enrage_multiplier=enrage_mult,started_at=now,ends_at=now+duration*3600,profile_json=json.dumps(profile,ensure_ascii=False))
+        return f"🌍🐉【大世界 Boss 降临】\n{name}\n❤️ HP：{fmt_num(hp)}\n📖 {desc}\n\n全群共享 Boss。输入 `/大世界Boss 攻击` 或 `/大世界Boss 技能 技能名` 参加战斗！"
+
+    def finish_global_boss(self, reason: str='Boss 被击败') -> str:
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        with raw.transaction() as conn:
+            b=conn.execute("SELECT * FROM global_boss WHERE id=1").fetchone()
+            if not b or not int(b['active']): return "🌍 当前没有活动中的大世界 Boss。"
+            now=int(time.time())
+            changed=conn.execute("UPDATE global_boss SET active=0,hp=0,last_finished_at=?,ends_at=0 WHERE id=1 AND active=1",(now,))
+            if int(changed.rowcount or 0)!=1: return "🌍 当前 Boss 正在结算，请稍后再查看。"
+        ranking=raw.get_global_boss_ranking(1000)
+        pool_coins=max(0,min(120000,int(b['reward_pool_coins'] or 0)))
+        pool_gems=max(0,min(150,int(b['reward_pool_gems'] or 0)))
+        total_damage=sum(max(0,int(r['damage'])) for r in ranking)
+        if total_damage<=0:
+            return "\n".join([f"🏆【大世界 Boss 结束】{b['name']}",f"原因：{reason}","", "本轮没有有效贡献记录，奖励池未发放。", "🌍 Boss 已关闭。"])
+
+        # 70% reward pool is rank bonus (35%/22%/13%); the remaining 30%
+        # is contribution-based. This guarantees total coin/gem rewards never
+        # exceed the configured pool, even with hundreds of participants.
+        rank_coin_pct=(0.35,0.22,0.13); rank_gem_pct=(0.35,0.22,0.13)
+        distributed_coins=0; distributed_gems=0
+        payouts=[]
+        for idx,row in enumerate(ranking):
+            uid=str(row['user_id']); damage=max(0,int(row['damage']))
+            rank_bonus_coins=int(pool_coins*rank_coin_pct[idx]) if idx<3 else 0
+            rank_bonus_gems=int(pool_gems*rank_gem_pct[idx]) if idx<3 else 0
+            contribution_coins=int(pool_coins*0.30*damage/total_damage)
+            contribution_gems=int(pool_gems*0.30*damage/total_damage)
+            coins=min(30000,max(0,rank_bonus_coins+contribution_coins))
+            gems=min(60,max(0,rank_bonus_gems+contribution_gems))
+            if coins or gems:
+                raw.wallet_change('__GLOBAL_USER__',uid,coins_delta=coins,gems_delta=gems,kind='global_boss_reward',note=f"大世界Boss贡献奖励{'（第'+str(idx+1)+'名）' if idx<3 else ''}")
+            distributed_coins += coins; distributed_gems += gems
+            self.add_renown(uid,int(self.cfg("world_reputation_boss",None,10)),"大世界Boss贡献")
+            exp=int(damage*min(80,int(b['exp_per_1000_damage'] or 0))/1000)
+            if exp:
+                raw.change_exp('__GLOBAL_USER__',uid,min(10000,exp))
+            if idx<3:
+                payouts.append(f"{idx+1}. {row['name']}｜{fmt_num(damage)} 伤害｜💰+{fmt_num(coins)} 💎+{gems}")
+
+        lines=[f"🏆【大世界 Boss 结束】{b['name']}",f"原因：{reason}","", "🏅 前三名："]
+        lines.extend(payouts or ["暂无有效榜单。"])
+        lines.append(f"\n💰 本轮实际发放：{fmt_num(distributed_coins)} / 资金池 {fmt_num(pool_coins)}")
+        lines.append(f"💎 本轮实际发放：{distributed_gems} / 资金池 {pool_gems}")
+        lines.append("🌍 Boss 已关闭，下一轮将按自动召唤设置等待。")
+        return "\n".join(lines)
+
+    def global_boss_attack(self, user_id: str, name: str, skill_id: str='普攻') -> Result:
+        raw=self.db.raw if hasattr(self.db,'raw') else self.db
+        b=raw.get_global_boss()
+        if not int(b['active']): return Result("🌍 当前没有活动中的大世界 Boss。")
+        now=utc_ts()
+        if int(b['ends_at']) and now>=int(b['ends_at']): return Result("⏳ 这个大世界 Boss 已经超时，请稍等系统结算。")
+        p,_=self.ensure_player('',user_id,name)
+        if int(p['death_state'] or 0): return Result(self.death_status('',user_id))
+        remaining=raw.cooldown_remaining('__GLOBAL_USER__',user_id,'global_boss_attack')
+        if remaining:return Result(f"⏳ 你对大世界 Boss 的攻击冷却还有 {remaining} 秒。")
+        if skill_id not in SKILLS:return Result("❌ 技能不存在。输入 `/技能` 查看可用技能。")
+        if skill_id!='普攻' and not any(r['skill_id']==skill_id and r['equipped'] for r in raw.fetchall('SELECT * FROM player_skills WHERE user_id=?',(user_id,))):return Result("❌ 该技能没有装备。先用 `/技能装备 技能名` 装配。")
+        skill=SKILLS[skill_id]; cost=max(int(b['stamina_cost'] or 12),int(skill.get('cost',0)))
+        if int(p['stamina'])<cost:return Result(f"❤️ 体力不足，需要 {cost} 点。")
+        raw.change_stamina('__GLOBAL_USER__',user_id,-cost)
+        eq=raw.get_equipped_stats('__GLOBAL_USER__',user_id); pet=raw.get_active_pet('__GLOBAL_USER__',user_id); equipped={r['skill_id'] for r in raw.fetchall('SELECT * FROM player_skills WHERE user_id=? AND equipped=1',(user_id,))}
+        damage,crit,bond=self._skill_damage(p,eq,pet,skill_id,equipped,int(b['defense']))
+        if skill.get('type')=='guard': damage=max(1,int((p['battle_attack']+eq['attack'])*0.25))
+        damage=max(1,min(240,damage))
+        after=raw.damage_global_boss_atomic(damage); actual_hp=int(after['hp']); raw.add_global_boss_damage(user_id,damage,now); raw.update_player_metrics('__GLOBAL_USER__',user_id,total_boss_damage=damage)
+        cd=max(1,int(b['attack_cooldown_seconds'] or 8)); raw.set_cooldown('__GLOBAL_USER__',user_id,'global_boss_attack',cd)
+        xp=min(3000,50+damage*max(0,int(b['exp_per_1000_damage'] or 20))//1000)
+        raw.change_exp('__GLOBAL_USER__',user_id,xp)
+        if actual_hp<=0:
+            return Result(f"🏆 你对【{b['name']}】造成 {fmt_num(damage)} 伤害，完成最后一击！\n🌍 Boss HP：0/{fmt_num(int(b['max_hp']))}\n⭐ +{xp} EXP\n全世界正在结算贡献奖励……")
+        ratio=actual_hp/max(1,int(b['max_hp']))
+        taken=max(1,min(45,int(int(b['attack'])*0.14)-min(120,int(eq.get('defense',0)))//4+random.randint(3,10)))
+        boss_special=random.random()*100 < float(b['skill_chance_percent'] or 0)
+        if boss_special:
+            taken=max(1,min(65,int(taken*1.55)))
+        enraged=ratio <= int(b['enrage_threshold_percent'])/100
+        if enraged:taken=max(1,min(80,int(taken*min(1.8,float(b['enrage_multiplier'] or 1.35)))))
+        raw.change_hp('__GLOBAL_USER__',user_id,-taken)
+        hpnow=raw.get_player('__GLOBAL_USER__',user_id)
+        death=''
+        if hpnow and int(hpnow['hp'])<=0:
+            death='\n💀 Boss 反击将你击倒，进入复活流程。'
+            self._handle_death('',user_id,'大世界 Boss 战斗')
+        phase='｜狂暴阶段' if enraged else ''
+        special=' ｜Boss 释放毁灭反击' if boss_special else ''
+        return Result(f"⚔️ {name} 使用【{skill_id}】对【{b['name']}】造成 {fmt_num(damage)} 伤害{'｜暴击' if crit else ''}{phase}{special}。\n🐉 全服 Boss HP：{fmt_num(actual_hp)}/{fmt_num(int(b['max_hp']))}\n💥 Boss 反击：-{taken} 战斗生命{death}\n⭐ +{xp} EXP\n\n下一步：继续 `/大世界Boss 攻击` 或 `/大世界Boss 技能 技能名`。",0)
+
     # ------------------------- cross-group PvP -------------------------
     def _duel_stats(self, user_id: str) -> dict[str, Any]:
         p=self.db.get_player("__GLOBAL_USER__",user_id)
         if not p: return {}
         eq=self.db.get_equipped_stats("__GLOBAL_USER__",user_id)
         pet=self.db.get_active_pet("__GLOBAL_USER__",user_id)
-        return {"user_id":user_id,"name":p["name"],"max_hp":max(1,int(p["max_hp"])+int(p["level"])*4),
-                "attack":max(1,int(p["battle_attack"])+int(eq.get("attack",0))+(int(pet["attack"]) if pet else 0)*2),
-                "defense":max(0,int(p["battle_defense"])+int(eq.get("defense",0))+(int(pet["defense"]) if pet else 0)),
-                "crit":float(p["battle_crit_rate"]),"dodge":float(p["battle_dodge_rate"]),"speed":int(p["battle_speed"]),"rating":int(p["pvp_rating"])}
+        level=min(60,max(1,int(p["level"] or 1)))
+        max_hp=min(1800,max(200,int(p["max_hp"])+level*4))
+        attack=min(240,max(25,int(p["battle_attack"])+min(180,int(eq.get("attack",0)))+(min(50,int(pet["attack"])) if pet else 0)))
+        defense=min(180,max(0,int(p["battle_defense"])+min(120,int(eq.get("defense",0)))+(min(50,int(pet["defense"])) if pet else 0)))
+        crit=min(28,max(0,float(p["battle_crit_rate"])))
+        dodge=min(20,max(0,float(p["battle_dodge_rate"])))
+        speed=min(180,max(40,int(p["battle_speed"])))
+        return {"user_id":user_id,"name":p["name"],"max_hp":max_hp,"attack":attack,"defense":defense,"crit":crit,"dodge":dodge,"speed":speed,"rating":int(p["pvp_rating"])}
 
     def duel_join(self, group_id: str, user_id: str, name: str, origin: str) -> str:
         if not bool(self.cfg("duel_enabled",group_id,True)): return "⚔️ 管理员已关闭跨群决斗。"
@@ -1861,11 +2178,12 @@ class WorldEngine:
         for _ in range(hits):
             if random.random()*100<float(target["dodge"]):
                 dodge_count+=1; continue
-            damage=max(1,int(stats["attack"]*power+random.randint(-5,10)-target["defense"]*0.45))
+            safe_power=min(1.9,max(0.8,power))
+            damage=max(1,int(stats["attack"]*safe_power+random.randint(-5,8)-target["defense"]*0.45))
             if random.random()*100<float(stats["crit"]):
-                damage=max(1,int(damage*1.8)); crit_count+=1
-            total_damage += damage
-        damage=max(0,total_damage)
+                damage=max(1,int(damage*1.65)); crit_count+=1
+            total_damage += min(180,damage)
+        damage=min(COMBAT_LIMITS["duel_damage"],max(0,total_damage))
         extra=[]
         if int(b[op+"_guard"]):
             damage=max(0,int(damage*0.45)); extra.append("🛡️ 对手防御，伤害降低 55%")
@@ -1893,11 +2211,24 @@ class WorldEngine:
             self.db.update_duel(b["id"],**fields)
             loser_group=b[op+"_group_id"]
             death_text=self._finish_duel_stats(winner,loser,loser_group)
+            bounty_result = None
+            if "bounty_id" in b.keys() and b["bounty_id"]:
+                try: bounty_result=self.db.raw.settle_bounty_duel(int(b["bounty_id"]),winner,loser)
+                except Exception: bounty_result=None
             final_row=self.db.get_duel(b["id"])
             result={"result":"win","winner_user_id":winner,"loser_user_id":loser,"damage":damage,"action":action_name,"loser_death_text":death_text}
             self.db.update_duel(b["id"],result_json=json.dumps(result,ensure_ascii=False))
             neutral=f"\n💀 败者【{b[op+'_name']}】已进入死亡/复活处理。"
-            return f"🏆【决斗结束】 {b[me+'_name']} 获胜！\n⚔️ {action_name} 造成 {damage} 伤害。" + (f"\n📌 {extra_text}" if extra_text else "") + neutral + f"\n💬 双方可在 {int(self.cfg('duel_message_window_seconds',None,300))} 秒内使用 `/战后留言 内容` 给对手留言。",self.db.get_duel(b["id"])
+            bounty_text = ""
+            if bounty_result and bounty_result.get("completed"):
+                if int(bounty_result.get('exp',0)):
+                    try: self.db.raw.change_exp("__GLOBAL_USER__",winner,int(bounty_result.get('exp',0)))
+                    except Exception: pass
+                self.add_renown(winner,int(self.cfg("world_reputation_bounty_reward",None,25)),"完成悬赏")
+                bounty_text = f"\n🎯 悬赏 #{b['bounty_id']} 完成！\n💰 +{fmt_num(int(bounty_result.get('coins',0)))} 金币 · 💎 +{int(bounty_result.get('gems',0))} · ⭐ +{fmt_num(int(bounty_result.get('exp',0)))} EXP\n🌟 完成悬赏，世界声望 +{int(self.cfg('world_reputation_bounty_reward',None,25))}"
+            elif bounty_result and bounty_result.get("reopened"):
+                bounty_text = f"\n🎯 悬赏 #{b['bounty_id']}：目标获胜，悬赏重新开放。"
+            return f"🏆【决斗结束】 {b[me+'_name']} 获胜！\n⚔️ {action_name} 造成 {damage} 伤害。" + (f"\n📌 {extra_text}" if extra_text else "") + bounty_text + neutral + f"\n💬 双方可在 {int(self.cfg('duel_message_window_seconds',None,300))} 秒内使用 `/战后留言 内容` 给对手留言。",self.db.get_duel(b["id"])
 
         fields.update(turn_user_id=b[op+"_user_id"],round_no=int(b["round_no"])+1,expires_at=now+max(30,timeout))
         self.db.update_duel(b["id"],**fields)
@@ -1906,6 +2237,9 @@ class WorldEngine:
         return f"⚔️ {b[me+'_name']} 使用【{action_name}】造成 {damage} 伤害！{summary}\n❤️ {b[op+'_name']}：{oh}/{b[op+'_max_hp']}\n❤️ {b[me+'_name']}：{mh_after}/{b[me+'_max_hp']}\n➡️ 下一回合：{b[op+'_name']}\n{self._duel_action_help(b[op+'_user_id'])}",nb
 
     def _finish_duel_draw(self,b):
+        if b.get("bounty_id") if isinstance(b,dict) else ("bounty_id" in b.keys()):
+            try: self.db.raw.reopen_bounty_after_draw(int(b["bounty_id"]))
+            except Exception: pass
         for uid in (b["p1_user_id"],b["p2_user_id"]):
             p=self.db.get_player("__GLOBAL_USER__",uid)
             if p:
@@ -1918,6 +2252,8 @@ class WorldEngine:
         winner_group=str(a["last_combat_group_id"] or loser_group_id)
         self.db.raw.set_global_player_fields(winner,{"battle_wins":int(a["battle_wins"])+1,"battle_kills":int(a["battle_kills"])+1,"pvp_rating":int(a["pvp_rating"])+k,"pvp_streak":int(a["pvp_streak"])+1,"last_combat_group_id":winner_group,"last_combat_at":utc_ts_iso()})
         self.db.raw.set_global_player_fields(loser,{"battle_losses":int(d["battle_losses"])+1,"battle_deaths":int(d["battle_deaths"])+1,"pvp_rating":max(0,int(d["pvp_rating"])-k),"pvp_streak":0,"hp":0,"last_combat_group_id":loser_group_id,"last_combat_at":utc_ts_iso()})
+        self.add_renown(winner,int(self.cfg("world_reputation_duel_win",None,15)),"决斗胜利")
+        self.add_renown(loser,int(self.cfg("world_reputation_duel_loss",None,-5)),"决斗失败")
         return self._handle_death(loser_group_id,loser,"跨群决斗失败")
 
     def duel_message(self,user_id:str,message:str)->tuple[str,dict|None,int|None]:
