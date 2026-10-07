@@ -45,12 +45,12 @@ except Exception:  # pragma: no cover - compatibility fallback
 try:
     from .core.database import Database
     from .core.globaldb import GlobalPlayerDB
-    from .core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WorldEngine
+    from .core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WORLD_REGIONS, WorldEngine
     from .cloud_client import CloudClient
 except ImportError:  # AstrBot loader compatibility when main.py is imported as a standalone module
     from core.database import Database
     from core.globaldb import GlobalPlayerDB
-    from core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WorldEngine
+    from core.engine import ACHIEVEMENT_INFO, PROFESSIONS, WORLD_REGIONS, WorldEngine
     from cloud_client import CloudClient
 
 PLUGIN_NAME = "astrbot_plugin_group_world"
@@ -58,7 +58,7 @@ CLOUD_DEFAULT_URL = "https://ysgl.bot.cd/astrbot"
 
 
 class Main(Star):
-    """群聊世界 V1.11.29.
+    """群聊世界 V1.13.5.
 
     The plugin deliberately relies on AstrBot's unified event/message layer.
     This keeps the game logic independent from QQ's transport while declaring
@@ -67,7 +67,10 @@ class Main(Star):
 
     def __init__(self, context: Context, config: Any):
         super().__init__(context)
-        self.config = config if hasattr(config, "save_config") else dict(config or {})
+        # AstrBot passes an AstrBotConfig (Dict-like + save_config()). Older/plugin-test
+        # environments may pass a plain dict. Keep the original object whenever possible
+        # so native WebUI configuration writes can persist correctly.
+        self.config = config if config is not None else {}
         self._closed = False
         self._task: asyncio.Task | None = None
         self._web_tokens: dict[str, tuple[str, int]] = {}
@@ -150,43 +153,69 @@ class Main(Star):
                 section = dict(defaults)
                 for key, value in legacy.items():
                     if value is not None:
-                        section[key] = bool(value)
+                        section[key] = self._config_bool(value, defaults[key])
             else:
                 section = {**defaults, **dict(section)}
 
             self.config["help_menu_settings"] = section
             # Hidden legacy keys remain synchronized for older integrations, but they
             # are never allowed to override the nested section.
-            self.config["help_menu_image_enabled"] = bool(section["image_enabled"])
-            self.config["help_menu_image_first"] = bool(section["image_first"])
-            self.config["help_menu_text_enabled"] = bool(section["text_enabled"])
+            self.config["help_menu_image_enabled"] = self._config_bool(section["image_enabled"], True)
+            self.config["help_menu_image_first"] = self._config_bool(section["image_first"], True)
+            self.config["help_menu_text_enabled"] = self._config_bool(section["text_enabled"], True)
             if "_help_menu_config_migrated" in self.config:
                 self.config["_help_menu_config_migrated"] = True
             self._save_config_object(self.config)
         except Exception as exc:
             logger.warning("[群聊世界] 帮助菜单配置迁移失败：%s", exc)
 
-    def _refresh_help_menu_config_from_disk(self) -> None:
-        """读取 AstrBot 当前配置文件中的菜单分区，支持保存后无需重载插件。"""
+    @staticmethod
+    def _config_bool(value: Any, default: bool = False) -> bool:
+        """统一处理 AstrBot 配置中的 bool/int/string，尤其避免 bool("false")==True。"""
+        if isinstance(value, bool): return value
+        if value is None: return default
+        if isinstance(value, (int, float)): return bool(value)
+        text = str(value).strip().lower()
+        if text in {"false","0","off","no","n","disabled","关闭","否"}: return False
+        if text in {"true","1","on","yes","y","enabled","开启","是"}: return True
+        return default
+
+    def _help_menu_config_path(self) -> Path | None:
+        config_path = getattr(self.config, "config_path", None)
+        if config_path:
+            try:
+                return Path(str(config_path))
+            except Exception:
+                pass
+        # AstrBot stores plugin configuration under data/config/<plugin>_config.json.
+        # Keep this fallback even when the file does not exist yet, because the first
+        # page save should be able to create it.
         try:
-            config_path = getattr(self.config, "config_path", None)
-            if not config_path:
+            base = Path(get_astrbot_data_path()) if get_astrbot_data_path else Path("data")
+            return base / "config" / f"{PLUGIN_NAME}_config.json"
+        except Exception:
+            return None
+
+    def _refresh_help_menu_config_from_disk(self) -> None:
+        """优先读取 AstrBot 实际配置文件，避免旧内存值或字符串布尔值继续控制 /帮助。"""
+        try:
+            path = self._help_menu_config_path()
+            if not path or not path.is_file():
                 return
-            path = Path(str(config_path))
-            if not path.is_file():
-                return
-            raw = path.read_text(encoding="utf-8-sig")
-            data = json.loads(raw)
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             section = data.get("help_menu_settings") if isinstance(data, dict) else None
             if not isinstance(section, dict):
-                return
+                section = {
+                    "image_enabled": data.get("help_menu_image_enabled", True),
+                    "text_enabled": data.get("help_menu_text_enabled", True),
+                    "image_first": data.get("help_menu_image_first", True),
+                }
             normalized = {
-                "image_enabled": bool(section.get("image_enabled", True)),
-                "text_enabled": bool(section.get("text_enabled", True)),
-                "image_first": bool(section.get("image_first", True)),
+                "image_enabled": self._config_bool(section.get("image_enabled"), True),
+                "text_enabled": self._config_bool(section.get("text_enabled"), True),
+                "image_first": self._config_bool(section.get("image_first"), True),
             }
             self.config["help_menu_settings"] = normalized
-            # Do not let legacy flat keys override the native nested section.
             self.config["help_menu_image_enabled"] = normalized["image_enabled"]
             self.config["help_menu_text_enabled"] = normalized["text_enabled"]
             self.config["help_menu_image_first"] = normalized["image_first"]
@@ -196,10 +225,17 @@ class Main(Star):
     def _help_menu_value(self, key: str, default: Any) -> Any:
         section = self.config.get("help_menu_settings")
         if isinstance(section, dict) and key in section:
-            return section.get(key)
-        return self.config.get(f"help_menu_{key}", default)
+            return self._config_bool(section.get(key), default) if key in {"image_enabled","text_enabled","image_first"} else section.get(key)
+        value = self.config.get(f"help_menu_{key}", default)
+        return self._config_bool(value, default) if key in {"image_enabled","text_enabled","image_first"} else value
 
     def _set_help_menu_config(self, **changes: Any) -> None:
+        """更新帮助菜单配置，并同步旧版平铺字段。
+
+        这里必须只使用固定默认值，不能引用不存在的局部变量；旧版实现会在
+        点击“保存设置”或上传图片时因为 NameError 导致整个操作失败。
+        """
+        defaults = {"image_enabled": True, "image_first": True, "text_enabled": True}
         section = self.config.get("help_menu_settings")
         if not isinstance(section, dict):
             section = {}
@@ -213,8 +249,11 @@ class Main(Star):
         for key, value in changes.items():
             if key not in mapping:
                 continue
-            section[key] = bool(value)
-            self.config[mapping[key]] = bool(value)
+            normalized = self._config_bool(value, defaults[key])
+            section[key] = normalized
+            self.config[mapping[key]] = normalized
+        for key, default in defaults.items():
+            section[key] = self._config_bool(section.get(key), default)
         self.config["help_menu_settings"] = section
 
     # ------------------------- help menu image -------------------------
@@ -238,14 +277,33 @@ class Main(Star):
             return default
         return None
 
-    @staticmethod
-    def _save_config_object(config: Any) -> bool:
+    def _save_config_object(self, config: Any) -> bool:
+        """保存 AstrBotConfig；对旧版/测试环境的普通 dict 提供文件落盘兜底。"""
         try:
             save = getattr(config, "save_config", None)
             if callable(save):
-                save()
+                result = save()
+                # save_config 通常是同步函数；某些兼容封装可能返回 awaitable。
+                if hasattr(result, "__await__"):
+                    # This helper is intentionally sync; defer async-compatible objects
+                    # to the manual file fallback instead of trying to run a nested loop.
+                    raise RuntimeError("异步 save_config 无法在当前同步保存路径中等待")
+                return True
+        except Exception as exc:
+            logger.debug("[群聊世界] AstrBotConfig.save_config 未成功，尝试文件落盘：%s", exc)
+
+        path = self._help_menu_config_path()
+        if path is None:
+            return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = dict(config) if hasattr(config, "items") else {}
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("[群聊世界] 配置文件落盘失败：%s", exc)
             return False
 
     def _menu_status(self, include_image: bool = False) -> dict[str, Any]:
@@ -380,6 +438,20 @@ class Main(Star):
                 if str(k).strip() and str(k) not in tutorials and isinstance(v, str):
                     tutorials[str(k)] = v
                     counts["tutorials"] += 1
+        payload=package.get('payload') if isinstance(package.get('payload'),dict) else {}
+        if isinstance(payload.get('bounty_templates'),list):
+            cur=self._cloud_data.setdefault('bounty_templates',[])
+            existing={str(x.get('id') or x.get('code')) for x in cur if isinstance(x,dict)}
+            for item in payload['bounty_templates'][:100]:
+                if isinstance(item,dict):
+                    iid=str(item.get('id') or '');
+                    if iid and iid not in existing: cur.append(item); existing.add(iid)
+                    elif iid:
+                        for i,x in enumerate(cur):
+                            if isinstance(x,dict) and str(x.get('id') or x.get('code'))==iid: cur[i]=item; break
+            counts['bounty_templates']=len(payload['bounty_templates'])
+        if isinstance(payload.get('global_boss'),dict):
+            self._cloud_data['global_boss_profile']=dict(payload['global_boss']); counts['global_boss']=1
         return counts
 
     def _cloud_active_merge_counts(self) -> dict[str, int]:
@@ -498,6 +570,8 @@ class Main(Star):
         self.config["cloud_monster_catalog_json"] = json.dumps(monsters, ensure_ascii=False)
         self.config["cloud_tutorial_pages_json"] = json.dumps(tutorials, ensure_ascii=False)
         self.config["cloud_boss_catalog_json"] = json.dumps(bosses, ensure_ascii=False)
+        if isinstance(data.get('global_boss_profile'), dict) and data.get('global_boss_profile'): self.config['global_boss_profile_json'] = json.dumps(data['global_boss_profile'], ensure_ascii=False)
+        self.config['cloud_bounty_templates_json'] = json.dumps(data.get('bounty_templates',[]) if isinstance(data.get('bounty_templates'),list) else [], ensure_ascii=False)
         self.config["cloud_npc_catalog_json"] = json.dumps(npcs, ensure_ascii=False)
 
     def _cloud_monster_list(self) -> list[dict[str, Any]]:
@@ -650,6 +724,16 @@ class Main(Star):
             pass
         return total
 
+    def _count_files(self, path: Path) -> int:
+        count = 0
+        try:
+            for item in path.rglob("*"):
+                if item.is_file():
+                    count += 1
+        except OSError:
+            pass
+        return count
+
     def _system_metrics(self) -> dict[str, Any]:
         total = available = used = 0
         percent = 0.0
@@ -679,6 +763,29 @@ class Main(Star):
                 percent = (used / total * 100) if total else 0.0
             except Exception:
                 pass
+        if not total:
+            try:
+                meminfo={}
+                with open("/proc/meminfo","r",encoding="utf-8") as fh:
+                    for line in fh:
+                        k, _, raw = line.partition(":")
+                        if not _:
+                            continue
+                        raw_parts=raw.strip().split()
+                        if not raw_parts:
+                            continue
+                        value=int(raw_parts[0])
+                        if len(raw_parts)>1 and raw_parts[1].lower()=="kb":
+                            value*=1024
+                        meminfo[k]=value
+                total=int(meminfo.get("MemTotal",0))
+                available=int(meminfo.get("MemAvailable",meminfo.get("MemFree",0)))
+                used=max(0,total-available)
+                percent=(used/total*100) if total else 0.0
+                if not process_rss:
+                    process_rss=int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)*1024
+            except Exception:
+                pass
         if not cpu_percent:
             try:
                 load = os.getloadavg()[0]
@@ -703,7 +810,7 @@ class Main(Star):
             "timestamp": int(time.time()),
             "server": {"memory_total": total, "memory_used": used, "memory_available": available, "memory_percent": round(percent, 1), "cpu_percent": round(cpu_percent, 1), "disk_free": disk_free},
             "process": {"pid": os.getpid(), "rss": process_rss, "cpu_percent": round(process_cpu, 1)},
-            "plugin": {"tracemalloc_current": trace_current, "tracemalloc_peak": trace_peak, "data_size": data_size, "cache_size": cache_size, "cache_dir": str(self.cache_dir)},
+            "plugin": {"tracemalloc_current": trace_current, "tracemalloc_peak": trace_peak, "data_size": data_size, "cache_size": cache_size, "cache_files": self._count_files(self.cache_dir) + (1 if self._cloud_cache_path.exists() else 0), "cache_dir": str(self.cache_dir)},
         }
 
     def _cleanup_cache(self, retention_days: int | None = None) -> dict[str, Any]:
@@ -852,6 +959,45 @@ class Main(Star):
             logger.debug("[群聊世界] AI NPC 对话不可用，回退普通逻辑：%s", exc)
             return base
 
+    # ------------------------- new world systems helpers -------------------------
+    async def _broadcast_all_groups(self, message: str, *, mention_user_id: str | None = None) -> int:
+        count = 0
+        rows = self.db.fetchall("SELECT DISTINCT session_origin FROM groups WHERE enabled=1 AND session_origin IS NOT NULL AND session_origin!=''")
+        seen=set()
+        for row in rows:
+            origin=str(row['session_origin'] or '').strip()
+            if not origin or origin in seen: continue
+            seen.add(origin)
+            if await self._broadcast(origin,message,proactive=False,mention_user_id=mention_user_id): count += 1
+        return count
+
+    async def _tick_new_world_systems(self, now_ts: int) -> None:
+        try:
+            # Bounty challenge requests expire automatically.
+            self.db.expire_bounties(now_ts)
+        except Exception as exc:
+            logger.debug('[群聊世界] 悬赏过期清理失败：%s', exc)
+        try:
+            b=self.db.get_global_boss()
+            if int(b['active']):
+                if int(b['hp'] or 0) <= 0:
+                    text=self.engine.finish_global_boss('玩家完成最后一击')
+                    if 'Boss 结束' in text:
+                        await self._broadcast_all_groups(text)
+                elif int(b['ends_at'] or 0) and now_ts >= int(b['ends_at']):
+                    text=self.engine.finish_global_boss('挑战超时')
+                    if 'Boss 结束' in text:
+                        await self._broadcast_all_groups(text)
+            elif bool(self.config.get('global_boss_enabled',True)) and bool(self.config.get('global_boss_auto_spawn',True)):
+                last=int(b['last_finished_at'] or 0)
+                interval=max(1,int(self.config.get('global_boss_interval_hours',24) or 24))*3600
+                groups=self.db.fetchall("SELECT COUNT(*) AS c FROM groups WHERE enabled=1 AND session_origin IS NOT NULL")
+                if int(groups[0]['c'] or 0)>0 and (last<=0 or now_ts-last>=interval):
+                    text=self.engine.spawn_global_boss()
+                    await self._broadcast_all_groups(text)
+        except Exception as exc:
+            logger.exception('[群聊世界] 大世界 Boss 定时处理失败：%s', exc)
+
     # ------------------------- automatic world loop -------------------------
 
     def _ensure_scheduler(self) -> None:
@@ -878,6 +1024,7 @@ class Main(Star):
             return
         if bool(self.config.get("cloud_auto_sync", True)):
             await self._cloud_sync_if_due(force=False)
+        await self._tick_new_world_systems(int(time.time()))
         await self._maybe_auto_cleanup()
         await self._scheduled_group_broadcasts(int(time.time()))
         # Finish countdown-based revivals even when the player does not send a message.
@@ -1118,6 +1265,73 @@ class Main(Star):
         self.db.upsert_group(group_id, event.unified_msg_origin)
         yield event.plain_result(self.engine.world_status(group_id))
 
+    @filter.command("地图", alias={"世界地图", "大世界地图"})
+    async def world_map(self, event: AstrMessageEvent):
+        blocked = self._disabled_or_private(event)
+        if blocked:
+            yield event.plain_result(blocked); return
+        yield event.plain_result(self.engine.world_map())
+
+    @filter.command("声望", alias={"世界声望", "renown"})
+    async def renown(self, event: AstrMessageEvent):
+        blocked = self._disabled_or_private(event)
+        if blocked:
+            yield event.plain_result(blocked); return
+        gid=self._group(event); uid=self._user(event); name=self._name(event)
+        yield event.plain_result(self.engine.player_world_status(uid,name,gid))
+
+    @filter.command("世界位置", alias={"位置", "世界坐标"})
+    async def world_position(self, event: AstrMessageEvent):
+        blocked = self._disabled_or_private(event)
+        if blocked:
+            yield event.plain_result(blocked); return
+        gid=self._group(event); uid=self._user(event); name=self._name(event)
+        yield event.plain_result(self.engine.player_world_status(uid,name,gid))
+
+    @filter.command("旅行", alias={"前往", "worldtravel"})
+    async def world_travel(self, event: AstrMessageEvent):
+        blocked = self._disabled_or_private(event)
+        if blocked:
+            yield event.plain_result(blocked); return
+        args=self._args(event); gid=self._group(event)
+        if not args:
+            yield event.plain_result("用法：`/旅行 地区名`\n先输入 `/地图` 查看地区、危险等级和旅行费用。"); return
+        yield event.plain_result(self.engine.travel(self._user(event),self._name(event),gid," ".join(args)))
+
+    @filter.command("世界设置", alias={"worldsettings", "世界配置"})
+    async def world_settings(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        gid=self._group(event)
+        if not gid: yield event.plain_result("❌ 世界设置只能在群聊中使用。"); return
+        self.db.upsert_group(gid,event.unified_msg_origin)
+        args=self._args(event)
+        if not args:
+            yield event.plain_result(self.engine.world_settings_text(gid)); return
+        if not self._has_admin_action(event,"world_settings"):
+            yield event.plain_result("🚫 你没有世界设置权限。"); return
+        sub=args[0]
+        regions=WORLD_REGIONS
+        if sub in {'地区','区域'} and len(args)>=2:
+            target=" ".join(args[1:]).strip()
+            rid=target if target in regions else next((k for k,v in regions.items() if v['name']==target),None)
+            if not rid: yield event.plain_result("❌ 地区不存在。输入 `/地图` 查看地区。"); return
+            self.db.update_group(gid,world_region_id=rid,world_location=regions[rid]['name'])
+            yield event.plain_result(f"✅ 已将本群世界地区设置为【{regions[rid]['name']}】（危险等级 {regions[rid]['tier']}）。"); return
+        if sub in {'阵营','faction'} and len(args)>=2:
+            faction=" ".join(args[1:]).strip(); allowed={'王国','联盟','深渊','自然','中立'}
+            if faction not in allowed: yield event.plain_result("❌ 阵营只能是：王国、联盟、深渊、自然、中立。"); return
+            self.db.update_group(gid,world_faction=faction); yield event.plain_result(f"✅ 本群阵营已设置为【{faction}】。"); return
+        if sub in {'天气','weather'} and len(args)>=2:
+            weather=" ".join(args[1:]).strip()[:40]; self.db.update_group(gid,world_weather=weather); yield event.plain_result(f"✅ 本群天气已设置为【{weather}】。"); return
+        if sub in {'事件','event'} and len(args)>=2:
+            on=args[1] in {'开启','开','on','1','true'}
+            self.db.update_group(gid,world_event_enabled=1 if on else 0); yield event.plain_result(f"✅ 世界事件已{'开启' if on else '关闭'}。"); return
+        if sub in {'重置','reset'}:
+            self.db.update_group(gid,world_region_id='starter',world_location='新手村',world_faction='中立',world_weather='晴朗',world_event_enabled=1)
+            yield event.plain_result("✅ 本群世界设置已恢复为【新手村 / 中立 / 晴朗 / 世界事件开启】。"); return
+        yield event.plain_result(self.engine.world_settings_text(gid))
+
     @filter.command("帮助", alias={"世界帮助", "worldhelp", "菜单", "世界菜单", "menu"})
     async def help(self, event: AstrMessageEvent):
         """查看群聊世界完整命令。"""
@@ -1127,7 +1341,7 @@ class Main(Star):
             return
         text = (
             "📖 【群聊世界命令】\n\n"
-            "👤 玩家：/注册 [邀请码] /我的 /签到 /邀请码 /教程 /继续教程 /跳过教程 /地图\n"
+            "👤 玩家：/注册 [邀请码] /我的 /签到 /邀请码 /教程 /继续教程 /跳过教程 /地图 /声望 /世界位置\n"
             "🗺️ 冒险：/探索 /探索 深度 /探索 危险 /钓鱼 /挖矿 /打工 /怪物\n"
             "✨ 战斗：/技能 /技能学习 /技能装备 /技能卸下 /攻击怪物 /技能使用 /自动战斗 /逃跑 /决斗匹配 /决斗状态 /决斗攻击 /决斗技能 /决斗防御 /战后留言 /复活状态 /群聊世界状态\n"
             "🎒 物品：/背包 /商店 /购买 ID 数量 /使用 ID 数量 /装备 /穿戴 ID /强化 ID /合成列表 /合成 ID /自动合成 /拆解 ID\n"
@@ -1136,13 +1350,17 @@ class Main(Star):
             "🏆 排行：/排行榜\n"
             "🎮 游戏：/游戏 /猜数字 /猜 N /猜拳 石头 /骰子 /炸弹 /抽炸弹\n"
             "🐉 Boss：/Boss /攻击\n"
+            "🎯 悬赏：/悬赏 /悬赏 规则 /悬赏 发布 GW-UID 金币 内容 /悬赏 我的 /悬赏 详情 ID /悬赏 领取 ID /悬赏 接受 ID /悬赏 拒绝 ID /悬赏 取消 ID\n"
+            "🌍 大世界 Boss：/大世界Boss /大世界Boss 攻击 /大世界Boss 技能 技能名 /大世界Boss 排行\n"
             "💸 社交：/转账 用户ID 金额\n\n"
             "管理员：/世界管理"
         )
-        image_path = self._menu_image_path()
-        send_image = bool(self._help_menu_value("image_enabled", True)) and bool(image_path)
-        send_text = bool(self._help_menu_value("text_enabled", True))
-        send_image_first = bool(self._help_menu_value("image_first", True))
+        self._refresh_help_menu_config_from_disk()
+        image_enabled = self._config_bool(self._help_menu_value("image_enabled", True), True)
+        send_text = self._config_bool(self._help_menu_value("text_enabled", True), True)
+        send_image_first = self._config_bool(self._help_menu_value("image_first", True), True)
+        image_path = self._menu_image_path() if image_enabled else None
+        send_image = bool(image_path)
 
         async def send_text_now() -> None:
             # 直接走 event.send()，这样适配器的真实发送异常能够被捕获。
@@ -2090,6 +2308,156 @@ class Main(Star):
             yield event.plain_result(f"😎 安全！你没有抽到炸弹。\n💰 +{reward}")
         self.engine.db.clear_game(self._group(event))
 
+    @filter.command("悬赏", alias={"赏金","bounty"})
+    async def bounty(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        if not bool(self.config.get('bounty_enabled',True)):
+            yield event.plain_result('🎯 管理员已关闭悬赏系统。'); return
+        args=self._args(event); uid=self._user(event); gid=self._group(event); name=self._name(event)
+        if not args:
+            yield event.plain_result(self.engine.bounty_list()); return
+        sub=args[0]
+        if sub in {'规则','规则说明','rules'}:
+            yield event.plain_result(
+                '🎯【悬赏规则 2.0】\n\n'
+                f"每天最多发布：{int(self.config.get('bounty_player_daily_limit',3) or 3)} 次\n"
+                f"同时进行中：{int(self.config.get('bounty_player_max_open',3) or 3)} 个\n"
+                f"单次金额：{int(self.config.get('bounty_min_coins',100) or 100)} ~ {int(self.config.get('bounty_max_coins',20000) or 20000)} 金币\n"
+                f"发布费：{int(self.config.get('bounty_publish_fee_coins',20) or 20)} 金币\n"
+                f"同一目标冷却：{max(0,int(self.config.get('bounty_same_target_cooldown_seconds',21600) or 21600))//3600} 小时\n\n"
+                '发布时奖励金币会先进入托管；只有正式决斗中挑战者战胜目标才结算。目标获胜、拒绝或决斗超时，不会凭空生成奖励金币。\n'
+                '格式：`/悬赏 发布 GW-XXXXXXXXXX 500 与目标进行正式决斗`'
+            ); return
+        if sub in {'我的','mine'}:
+            rows=self.db.get_user_bounties(uid,20)
+            if not rows: yield event.plain_result('🎯 你还没有发布过玩家悬赏。'); return
+            labels={'open':'开放中','challenge':'等待目标','dueling':'决斗中','completed':'已完成','expired':'已过期','cancelled':'已取消'}
+            lines=['🎯【我的悬赏】']
+            for r in rows:
+                lines.append(f"#{r['id']}｜目标 {r['target_player_uid'] or r['target_name'] or '—'}｜💰{int(r['reward_coins'])}｜{labels.get(r['status'],r['status'])}")
+            yield event.plain_result('\n'.join(lines)); return
+        if sub in {'发布','创建','post','create'}:
+            if len(args)<3:
+                yield event.plain_result('用法：`/悬赏 发布 GW-XXXXXXXXXX 金币 内容`\n例如：`/悬赏 发布 GW-A1B2C3D4E5 500 与目标正式决斗`'); return
+            target_ref=args[1].strip().upper()
+            target=self.db.find_player_by_uid(target_ref)
+            if not target:
+                yield event.plain_result('❌ 找不到该 GW-UID。请使用 `/排行榜` 或 `/我的` 获取正确 UID。'); return
+            target_uid=str(target['user_id'] or '')
+            if target_uid==uid:
+                yield event.plain_result('❌ 不能悬赏自己。'); return
+            if int(target['banned'] or 0):
+                yield event.plain_result('❌ 该玩家当前已被封禁，不能作为悬赏目标。'); return
+            if self.db.has_active_bounty(uid,target_uid):
+                yield event.plain_result('❌ 你已经有一个针对该目标的进行中悬赏。'); return
+            daily=int(self.config.get('bounty_player_daily_limit',3) or 3)
+            if daily>0 and self.db.count_bounties_published(uid,int(time.time())-86400)>=daily:
+                yield event.plain_result(f'❌ 你今天已经发布 {daily} 次悬赏，明天再来。'); return
+            max_open=int(self.config.get('bounty_player_max_open',3) or 3)
+            open_rows=[r for r in self.db.get_user_bounties(uid,100) if str(r['status']) in {'open','challenge','dueling'}]
+            if max_open>0 and len(open_rows)>=max_open:
+                yield event.plain_result(f'❌ 你的进行中悬赏已达到上限 {max_open} 个。'); return
+            cooldown=max(0,int(self.config.get('bounty_same_target_cooldown_seconds',21600) or 21600))
+            if cooldown>0 and self.db.recent_bounty_against_target(uid,target_uid,int(time.time())-cooldown):
+                yield event.plain_result(f'❌ 你最近已经针对该玩家发布过悬赏，请等待 {cooldown//3600} 小时冷却。'); return
+            try: reward=int(args[2])
+            except ValueError:
+                yield event.plain_result('❌ 悬赏金额必须是整数。'); return
+            min_reward=max(1,int(self.config.get('bounty_min_coins',100) or 100)); max_reward=max(min_reward,int(self.config.get('bounty_max_coins',20000) or 20000))
+            if reward<min_reward or reward>max_reward:
+                yield event.plain_result(f'❌ 悬赏金额必须在 {min_reward} ~ {max_reward} 金币之间。'); return
+            desc=' '.join(args[3:]).strip()[:1000]
+            if not desc: desc='与指定玩家进行正式跨群决斗并取胜。'
+            hours=max(1,min(720,int(self.config.get('bounty_default_duration_hours',24) or 24)))
+            fee=max(0,int(self.config.get('bounty_publish_fee_coins',20) or 20))
+            target_groups=self.db.get_user_groups(target_uid); target_group=target_groups[0] if target_groups else None
+            target_group_id=str(target_group['group_id']) if target_group else ''
+            target_origin=''
+            if target_group:
+                g=self.db.get_group(target_group_id); target_origin=str(g['session_origin'] or '') if g else ''
+            ok,msg,bid=self.db.create_player_bounty(
+                publisher_user_id=uid,publisher_name=name,publisher_group_id=gid,publisher_origin=getattr(event,'unified_msg_origin','') or '',
+                target_user_id=target_uid,target_player_uid=str(target['player_uid']),target_name=str(target['name'] or '冒险者'),target_group_id=target_group_id,
+                title='玩家悬赏：与指定冒险者正式决斗',description=desc,reward_coins=reward,expires_at=int(time.time())+hours*3600,publish_fee=fee,
+            )
+            if not ok:
+                yield event.plain_result(f'❌ {msg}'); return
+            notice=(f"🎯【悬赏通缉令】\n你被玩家 {name}（{uid}）发布为决斗悬赏目标！\n悬赏编号：#{bid}\n奖励：💰 {reward}\n\n"
+                    f"目标描述：{desc}\n\n任何其他玩家可输入 `/悬赏 领取 {bid}` 发起挑战；只有挑战者正式获胜才能获得托管奖励。")
+            if target_origin:
+                await self._broadcast(target_origin,notice,proactive=False,mention_user_id=target_uid)
+            yield event.plain_result(f'✅ 悬赏 #{bid} 发布成功！\n目标：{target["player_uid"]} · {target["name"]}\n💰 托管奖励：{reward}\n💸 发布费：{fee}\n⏳ 有效期：{hours} 小时\n\n已通知目标玩家。'); return
+        if sub in {'详情','detail','查看'} and len(args)>=2 and args[1].isdigit():
+            yield event.plain_result(self.engine.bounty_detail(int(args[1]))); return
+        if sub in {'领取','接取','claim'} and len(args)>=2 and args[1].isdigit():
+            bid=int(args[1]); row=self.db.get_bounty(bid)
+            if not row or row['status']!='open': yield event.plain_result('❌ 这个悬赏当前不可领取。'); return
+            if str(row['target_user_id'] or '')==uid: yield event.plain_result('❌ 目标本人不能领取针对自己的决斗悬赏。'); return
+            if self.db.get_active_duel_for_user(uid): yield event.plain_result('⏳ 你当前已经在决斗中。'); return
+            challenge_exp=int(time.time())+max(30,int(self.config.get('bounty_challenge_timeout_seconds',300) or 300))
+            if not self.db.claim_bounty(bid,uid,name,gid,getattr(event,'unified_msg_origin','') or '',challenge_exp):
+                yield event.plain_result('❌ 悬赏已被其他玩家接取、已失效，或你不能接取该悬赏。'); return
+            target_origin=str(row['target_origin'] or '')
+            if not target_origin:
+                groups=self.db.get_user_groups(str(row['target_user_id'] or ''))
+                if groups:
+                    g=self.db.get_group(str(groups[0]['group_id']))
+                    target_origin=str(g['session_origin'] or '') if g else ''
+            notice=f"🎯【悬赏挑战】\n玩家 {name}（{uid}）已接取悬赏 #{bid}。\n{row['title']}\n\n请在倒计时内选择：\n✅ `/悬赏 接受 {bid}` 开始正式决斗\n❌ `/悬赏 拒绝 {bid}` 放弃此次挑战"
+            if target_origin:
+                await self._broadcast(target_origin,notice,proactive=False,mention_user_id=str(row['target_user_id'] or ''))
+            yield event.plain_result(f'✅ 已接取悬赏 #{bid}，挑战请求已通知目标。\n⏳ 等待目标接受，超时将自动重新开放。'); return
+        if sub in {'接受','accept'} and len(args)>=2 and args[1].isdigit():
+            bid=int(args[1]); row=self.db.get_bounty(bid)
+            if not row or row['status']!='challenge' or str(row['target_user_id'] or '')!=uid: yield event.plain_result('❌ 这个悬赏没有等待你接受，或挑战已经过期。'); return
+            if self.db.get_active_duel_for_user(uid): yield event.plain_result('⏳ 你当前已经在其他决斗中。'); return
+            p=self.engine_db.get_global_player(uid)
+            if p and int(p['death_state'] or 0): yield event.plain_result('💀 你当前处于死亡状态，不能接受悬赏决斗。'); return
+            if not self.db.accept_bounty(bid,uid): yield event.plain_result('❌ 接受失败，挑战可能已经超时。'); return
+            text,battle=self.engine.create_direct_duel_for_bounty(bid,int(self.config.get('duel_turn_timeout_seconds',120) or 120))
+            if not battle:
+                self.db.execute("UPDATE bounties SET status='open',claimed_by_user_id=NULL,claimed_by_name=NULL,claimed_group_id=NULL,claimed_origin=NULL,challenge_expires_at=0,duel_battle_id=NULL WHERE id=? AND status='dueling'",(bid,))
+                yield event.plain_result(text); return
+            claimant=str(row['claimed_by_user_id'] or ''); claimant_origin=str(row['claimed_origin'] or '')
+            if claimant_origin:
+                await self._broadcast(claimant_origin,f"⚔️【悬赏决斗成立】\n目标 {name} 已接受悬赏 #{bid}。\n现在开始正式战斗。\n输入 `/决斗攻击`、`/决斗技能` 或 `/决斗防御`。",proactive=False,mention_user_id=claimant)
+            yield event.plain_result(text); return
+        if sub in {'拒绝','reject'} and len(args)>=2 and args[1].isdigit():
+            bid=int(args[1]); row=self.db.get_bounty(bid)
+            if not row or row['status']!='challenge' or str(row['target_user_id'] or '')!=uid: yield event.plain_result('❌ 这个悬赏没有等待你拒绝，或挑战已经过期。'); return
+            if not self.db.reject_bounty(bid,uid): yield event.plain_result('❌ 拒绝失败。'); return
+            if row['claimed_origin']:
+                await self._broadcast(str(row['claimed_origin']),f"❌【悬赏 #{bid}】目标玩家拒绝了这次挑战，悬赏已重新开放。",proactive=False,mention_user_id=str(row['claimed_by_user_id'] or ''))
+            yield event.plain_result(f'✅ 已拒绝悬赏 #{bid}，现在其他玩家可以重新接取。'); return
+        if sub in {'取消','cancel'} and len(args)>=2 and args[1].isdigit():
+            result=self.db.cancel_bounty(int(args[1]),requester_user_id=uid)
+            yield event.plain_result((f"✅ {result['message']}\n💰 已退回托管金币：{int(result.get('refund_coins',0))}" if result.get('ok') else f"❌ {result.get('message','取消失败。')}")); return
+        yield event.plain_result('用法：`/悬赏` 查看大厅｜`/悬赏 规则`｜`/悬赏 发布 GW-UID 金币 内容`｜`/悬赏 我的`｜`/悬赏 详情 ID`｜`/悬赏 领取 ID`｜`/悬赏 接受 ID`｜`/悬赏 拒绝 ID`｜`/悬赏 取消 ID`')
+
+    @filter.command("大世界Boss", alias={"大世界BOSS","GlobalBoss","globalboss","世界大Boss"})
+    async def global_boss(self,event:AstrMessageEvent):
+        blocked=self._disabled_or_private(event)
+        if blocked: yield event.plain_result(blocked); return
+        if not bool(self.config.get('global_boss_enabled',True)):
+            yield event.plain_result('🌍 管理员已关闭大世界 Boss。'); return
+        args=self._args(event); sub=(args[0] if args else '状态')
+        if sub in {'状态','status','查看',''}: yield event.plain_result(self.engine.global_boss_status()); return
+        if sub in {'排行','排名','ranking'}:
+            raw=self.db.get_global_boss_ranking(20); lines=['🏆【大世界 Boss 贡献榜】']
+            if not raw: lines.append('暂无贡献记录。')
+            for i,r in enumerate(raw,1): lines.append(f"{i}. {r['name']}｜{fmt_num(int(r['damage']))} 伤害｜{int(r['attacks'])} 次")
+            yield event.plain_result('\n'.join(lines)); return
+        skill='普攻'
+        if sub in {'技能','skill'}: skill=args[1] if len(args)>=2 else '普攻'
+        elif sub not in {'攻击','attack'}: skill=sub
+        result=self.engine.global_boss_attack(self._user(event),self._name(event),skill)
+        yield event.plain_result(result.text)
+        b=self.db.get_global_boss()
+        if int(b['active']) and int(b['hp'])<=0:
+            finish=self.engine.finish_global_boss(f"{self._name(event)} 完成最后一击")
+            await self._broadcast_all_groups(finish)
+
     # ------------------------- Boss & social -------------------------
 
     @filter.command("Boss", alias={"boss", "世界Boss"})
@@ -2378,7 +2746,7 @@ class Main(Star):
         return json_response({
             "author": "ysgl",
             "plugin": PLUGIN_NAME,
-            "version": "1.11.29",
+            "version": "1.13.5",
             "username": username,
             "authenticated": authed,
             "password_configured": password_configured,
@@ -2412,7 +2780,48 @@ class Main(Star):
         if denied: return denied
         summary = self.db.get_dashboard_summary()
         groups = [dict(r) for r in self.db.get_group_details(30)]
-        return json_response({"summary": summary, "groups": groups})
+        include_worldplus = False
+        refresh_worldplus = False
+        try:
+            include_worldplus = bool(request and str(request.query.get("worldplus") or "0") == "1")
+            refresh_worldplus = bool(request and str(request.query.get("refresh") or "0") == "1")
+        except Exception:
+            pass
+        payload = {"summary": summary, "groups": groups}
+        if include_worldplus:
+            if refresh_worldplus and bool(self.config.get("cloud_enabled", False)) and str(self.config.get("cloud_api_key") or "").strip():
+                try:
+                    await self._cloud_sync_if_due(force=True)
+                except Exception as exc:
+                    logger.warning("[群聊世界] 刷新悬赏资产目录时云端同步失败：%s", exc)
+            self.db.expire_bounties()
+            bounties = []
+            for row in self.db.get_bounties(None, 100):
+                item = dict(row)
+                try:
+                    item["reward_items"] = json.loads(str(item.get("reward_items_json") or "[]"))
+                except Exception:
+                    item["reward_items"] = []
+                bounties.append(item)
+            payload["worldplus"] = {
+                "ok": True,
+                "bounties": bounties,
+                "global_boss": dict(self.db.get_global_boss()),
+                "global_boss_ranking": [dict(x) for x in self.db.get_global_boss_ranking(20)],
+                "catalog": self._build_bounty_reward_catalog(),
+                "config": {k: self.config.get(k) for k in (
+                    'bounty_enabled','bounty_default_duration_hours','bounty_challenge_timeout_seconds','bounty_player_daily_limit',
+                    'bounty_player_max_open','bounty_min_coins','bounty_max_coins','bounty_publish_fee_coins','bounty_same_target_cooldown_seconds',
+                    'world_map_enabled','world_travel_enabled','world_travel_base_cost','world_travel_cooldown_seconds','world_reputation_enabled',
+                    'global_boss_enabled','global_boss_auto_spawn','global_boss_interval_hours','global_boss_name','global_boss_description',
+                    'global_boss_max_hp','global_boss_attack','global_boss_defense','global_boss_skill_chance_percent','global_boss_duration_hours',
+                    'global_boss_attack_cooldown_seconds','global_boss_stamina_cost','global_boss_participation_reward',
+                    'global_boss_reward_pool_coins','global_boss_reward_pool_gems','global_boss_exp_per_1000_damage',
+                    'global_boss_enrage_threshold_percent','global_boss_enrage_multiplier','global_boss_profile_json'
+                )},
+                "refreshed": refresh_worldplus,
+            }
+        return json_response(payload)
 
     async def page_groups(self):
         denied = self._require_web(False)
@@ -2565,7 +2974,8 @@ class Main(Star):
         unknown = [k for k in changes if k not in allowed]
         if unknown:
             return error_response(f"不允许修改配置项：{unknown[0]}", status_code=400)
-        self._set_help_menu_config(**{k: bool(v) for k, v in changes.items()})
+        normalized_changes = {k: self._config_bool(changes[k], True) for k in changes}
+        self._set_help_menu_config(**normalized_changes)
         if not self._save_config_object(self.config):
             return error_response("帮助菜单设置写入失败，请检查 AstrBot 配置文件权限。", status_code=500)
         self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "help_menu_save", None, json.dumps(changes, ensure_ascii=False))
@@ -2605,9 +3015,10 @@ class Main(Star):
             tmp = self.data_dir / ".menu_upload.tmp"
             try:
                 self.data_dir.mkdir(parents=True, exist_ok=True)
-                if PluginUploadFile is not None and not isinstance(upload, PluginUploadFile):
-                    return error_response("上传文件类型无效。", status_code=400)
-                await upload.save(tmp)
+                save_method = getattr(upload, "save", None)
+                if not callable(save_method):
+                    return error_response("上传文件对象不支持保存，请刷新 AstrBot 管理面板后重试。", status_code=400)
+                await save_method(tmp)
                 decoded = tmp.read_bytes()
                 filename = str(getattr(upload, "filename", "menu_image") or "menu_image")
                 content_type = str(getattr(upload, "content_type", "") or "")
@@ -2694,10 +3105,12 @@ class Main(Star):
         token = str(payload.get("token") or "")
         denied = self._require_web(True, token)
         if denied: return denied
+        purge_all = bool(payload.get("purge_all", False))
         days = int(payload.get("retention_days", self.config.get("maintenance_cache_retention_days", 7)) or 7)
-        result = self._cleanup_cache(days)
+        result = self._cleanup_cache(0 if purge_all else days)
+        result["purge_all"] = purge_all
         self.db.add_admin_log("__SYSTEM__", self._web_username() or "web", "cleanup_cache", None, json.dumps(result, ensure_ascii=False))
-        return json_response({"ok": True, **result, "metrics": self._system_metrics()})
+        return json_response({"ok": True, **result, "message": f"已清理全部可重建缓存。" if purge_all else f"已按保留 {days} 天规则清理缓存。", "metrics": self._system_metrics()})
 
     async def page_broadcasts(self):
         denied = self._require_web(False)
@@ -2939,17 +3352,17 @@ class Main(Star):
             self.config[key] = value
         menu_changes = {}
         if "help_menu_image_enabled" in changes:
-            menu_changes["image_enabled"] = bool(changes["help_menu_image_enabled"])
+            menu_changes["image_enabled"] = self._config_bool(changes["help_menu_image_enabled"], True)
         if "help_menu_image_first" in changes:
-            menu_changes["image_first"] = bool(changes["help_menu_image_first"])
+            menu_changes["image_first"] = self._config_bool(changes["help_menu_image_first"], True)
         if "help_menu_text_enabled" in changes:
-            menu_changes["text_enabled"] = bool(changes["help_menu_text_enabled"])
+            menu_changes["text_enabled"] = self._config_bool(changes["help_menu_text_enabled"], True)
         if "help_menu_settings" in changes and isinstance(changes["help_menu_settings"], dict):
             section = changes["help_menu_settings"]
             menu_changes.update({
-                "image_enabled": bool(section.get("image_enabled", True)),
-                "text_enabled": bool(section.get("text_enabled", True)),
-                "image_first": bool(section.get("image_first", True)),
+                "image_enabled": self._config_bool(section.get("image_enabled", True), True),
+                "text_enabled": self._config_bool(section.get("text_enabled", True), True),
+                "image_first": self._config_bool(section.get("image_first", True), True),
             })
         if menu_changes:
             self._set_help_menu_config(**menu_changes)
@@ -2997,14 +3410,18 @@ class Main(Star):
             return json_response({"ok": True, "message": text, "broadcast": True})
         if action == "save_settings":
             raw_payload=payload.get("settings") if isinstance(payload.get("settings"),dict) else {}
-            allowed={"world_weather","world_location","world_event_enabled","explore_enabled","monster_enabled","monster_chance_percent","monster_max_count","monster_multi_chance_percent","npc_enabled","npc_chance_percent","npc_interval_minutes"}
+            allowed={"world_weather","world_location","world_region_id","world_faction","world_event_enabled","explore_enabled","monster_enabled","monster_chance_percent","monster_max_count","monster_multi_chance_percent","npc_enabled","npc_chance_percent","npc_interval_minutes"}
             clean={}
             for k,v in raw_payload.items():
                 if k not in allowed: continue
-                if k in {"world_weather","world_location"}: clean[k]=str(v)[:80]
+                if k in {"world_weather","world_location","world_region_id","world_faction"}: clean[k]=str(v)[:80]
                 else:
                     try: clean[k]=int(v)
                     except Exception: return error_response(f"{k} 必须是整数",status_code=400)
+            if "world_region_id" in clean and clean["world_region_id"] not in WORLD_REGIONS:
+                return error_response("world_region_id 无效，请使用 /地图 中的地区。",status_code=400)
+            if "world_faction" in clean and clean["world_faction"] not in {"王国","联盟","深渊","自然","中立"}:
+                return error_response("world_faction 无效。",status_code=400)
             if "monster_chance_percent" in clean: clean["monster_chance_percent"]=max(0,min(100,clean["monster_chance_percent"]))
             if "monster_multi_chance_percent" in clean: clean["monster_multi_chance_percent"]=max(0,min(100,clean["monster_multi_chance_percent"]))
             if "monster_max_count" in clean: clean["monster_max_count"]=max(1,min(3,clean["monster_max_count"]))
@@ -3357,6 +3774,8 @@ class Main(Star):
                 "monsters": len(data.get("monsters", []) if isinstance(data.get("monsters"), list) else []),
                 "npcs": len(data.get("npcs", []) if isinstance(data.get("npcs"), list) else []),
                 "crafting_recipes": len(data.get("crafting_recipes", {}) if isinstance(data.get("crafting_recipes"), dict) else {}),
+                "bounty_templates": len(data.get("bounty_templates", []) if isinstance(data.get("bounty_templates"), list) else []),
+                "global_boss": 1 if isinstance(data.get("global_boss_profile"), dict) and data.get("global_boss_profile") else 0,
                 "community_packages": len(data.get("community_packages", []) if isinstance(data.get("community_packages"), list) else []),
             },
             "active_merge_counts": self._cloud_active_merge_counts(),
@@ -3516,6 +3935,8 @@ class Main(Star):
             "tutorials": data.get("tutorials", {}),
             "monsters": data.get("monsters", []),
             "npcs": data.get("npcs", []),
+            "bounty_templates": data.get("bounty_templates", []),
+            "global_boss": data.get("global_boss_profile", {}),
             "community_packages": data.get("community_packages", []),
             "custom_json_packages": data.get("custom_json_packages", []),
         }
@@ -3524,6 +3945,391 @@ class Main(Star):
         if file_response:
             return file_response(target, filename=target.name, content_type="application/json")
         return json_response(export)
+
+    async def page_world_settings(self):
+        denied=self._require_web(False)
+        if denied:return denied
+        group_id=str(request.query.get("group_id") or "").strip() if request else ""
+        if not group_id:return error_response("缺少 group_id。",status_code=400)
+        group=self.db.get_group(group_id)
+        if not group:
+            group=self.db.upsert_group(group_id)
+        regions=[{"id":rid,**dict(info)} for rid,info in WORLD_REGIONS.items()]
+        factions=["王国","联盟","深渊","自然","中立"]
+        return json_response({"ok":True,"group":dict(group),"regions":regions,"factions":factions})
+
+    async def page_world_settings_save(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        group_id=str(payload.get("group_id") or "").strip()
+        if not group_id:return error_response("缺少 group_id。",status_code=400)
+        group=self.db.get_group(group_id) or self.db.upsert_group(group_id)
+        settings=payload.get("settings") or {}
+        if not isinstance(settings,dict):return error_response("settings 必须是对象。",status_code=400)
+        rid=str(settings.get("world_region_id") or settings.get("region_id") or "").strip()
+        if rid not in WORLD_REGIONS: return error_response("世界地区不存在，请从地区列表中选择。",status_code=400)
+        faction=str(settings.get("world_faction") or "中立").strip()
+        if faction not in {"王国","联盟","深渊","自然","中立"}: return error_response("阵营无效。",status_code=400)
+        weather=str(settings.get("world_weather") or "晴朗").strip()[:80]
+        location=str(settings.get("world_location") or WORLD_REGIONS[rid]["name"]).strip()[:120]
+        try:
+            fields={
+                "world_region_id":rid,"world_faction":faction,"world_weather":weather,"world_location":location,
+                "world_event_enabled":1 if bool(settings.get("world_event_enabled",1)) else 0,
+                "explore_enabled":1 if bool(settings.get("explore_enabled",1)) else 0,
+                "monster_enabled":1 if bool(settings.get("monster_enabled",1)) else 0,
+                "monster_chance_percent":max(0,min(35,int(settings.get("monster_chance_percent",16)))),
+                "monster_max_count":max(1,min(2,int(settings.get("monster_max_count",2)))),
+                "monster_multi_chance_percent":max(0,min(35,int(settings.get("monster_multi_chance_percent",18)))),
+                "npc_enabled":1 if bool(settings.get("npc_enabled",1)) else 0,
+                "npc_chance_percent":max(0,min(35,int(settings.get("npc_chance_percent",10)))),
+                "npc_interval_minutes":max(5,min(1440,int(settings.get("npc_interval_minutes",120)))),
+            }
+        except Exception:return error_response("世界设置包含无效数字。",status_code=400)
+        self.db.update_group(group_id,**fields)
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','world_settings_save',str(group_id),json.dumps(fields,ensure_ascii=False,separators=(',',':')))
+        return json_response({"ok":True,"message":"世界设置已保存。","group":dict(self.db.get_group(group_id))})
+
+    def _build_bounty_reward_catalog(self) -> list[dict[str, Any]]:
+        """Build a safe bounty reward catalog from every usable in-plugin/cloud asset.
+
+        Sources include:
+        - built-in ITEM_INFO items;
+        - actual monster drop materials from built-in/local/cloud monster catalogs;
+        - built-in/local/cloud shop products;
+        - equipment blueprints from built-in/local/cloud crafting recipes.
+        Cloud entries are descriptive data only and never execute code.
+        """
+        from .core.engine import ITEM_INFO, SHOP, MONSTER_TEMPLATES, CRAFTING_RECIPES
+
+        catalog: dict[str, dict[str, Any]] = {}
+
+        def add_item(iid: str, name: str, desc: str, source: str, category: str = "材料/道具",
+                     reward_type: str = "item", **extra: Any) -> None:
+            iid = str(iid or "").strip()[:96]
+            if not iid:
+                return
+            row = catalog.get(iid)
+            priority = 0 if source.startswith("插件内置") else (1 if source.startswith("本地") else 2)
+            if row and int(row.get("_priority", 0)) < priority:
+                return
+            value = {
+                "item_id": iid,
+                "name": str(name or iid)[:120],
+                "description": str(desc or "可作为悬赏奖励。")[:300],
+                "source": str(source)[:80],
+                "category": str(category)[:60],
+                "reward_type": reward_type,
+                "_priority": priority,
+            }
+            value.update(extra)
+            catalog[iid] = value
+
+        # 1) Built-in backpack assets.
+        for iid, (name, desc) in ITEM_INFO.items():
+            add_item(iid, name, desc, "插件内置 · 道具", "道具")
+
+        # 2) Built-in shop assets.
+        for iid, val in SHOP.items():
+            if isinstance(val, (tuple, list)) and len(val) >= 3:
+                add_item(iid, val[0], val[2], "插件内置 · 商店", "商店商品")
+
+        def parse_catalog(raw: Any) -> dict[str, Any]:
+            try:
+                if isinstance(raw, str):
+                    value = json.loads(raw or "{}")
+                else:
+                    value = raw
+                return value if isinstance(value, dict) else {}
+            except Exception:
+                return {}
+
+        # 3) Monster drop materials. This is intentionally separate from the monster
+        # itself: the reward picker should show the actual drops users recognize.
+        def ingest_monsters(monsters: Any, source: str) -> None:
+            if isinstance(monsters, list):
+                monsters = {str(x.get("id") or x.get("code") or x.get("name") or f"monster_{i}"): x for i, x in enumerate(monsters) if isinstance(x, dict)}
+            if not isinstance(monsters, dict):
+                return
+            for mid, monster in list(monsters.items())[:1000]:
+                if not isinstance(monster, dict):
+                    continue
+                mname = str(monster.get("name") or mid)[:80]
+                drops = monster.get("items")
+                if not drops:
+                    drops = monster.get("drops") or monster.get("drop_items") or monster.get("loot")
+                entries = []
+                if isinstance(drops, dict):
+                    entries = list(drops.items())
+                elif isinstance(drops, list):
+                    for drop in drops[:50]:
+                        if isinstance(drop, str):
+                            entries.append((drop, 1))
+                        elif isinstance(drop, dict):
+                            did = drop.get("item_id") or drop.get("id") or drop.get("code") or drop.get("item_no")
+                            if did:
+                                entries.append((did, drop.get("qty") or drop.get("quantity") or 1))
+                for drop_id, qty in entries[:50]:
+                    drop_id = str(drop_id).strip()
+                    if not drop_id:
+                        continue
+                    fallback = ITEM_INFO.get(drop_id, (drop_id, "怪物掉落材料"))
+                    add_item(drop_id, fallback[0], fallback[1], f"{source} · 怪物：{mname}", "怪物材料")
+
+        ingest_monsters(dict(MONSTER_TEMPLATES), "插件内置")
+        ingest_monsters(parse_catalog(self.config.get("monster_catalog_json", "{}")), "本地自定义")
+        ingest_monsters(parse_catalog(self.config.get("cloud_monster_catalog_json", "{}")), "云端同步")
+
+        # 4) Local/cloud shop product catalogs.
+        for cfg_key, label in (("shop_catalog_json", "本地自定义 · 商店"), ("cloud_shop_catalog_json", "云端同步 · 商店")):
+            for iid, val in parse_catalog(self.config.get(cfg_key, "{}")).items():
+                if isinstance(val, (tuple, list)) and len(val) >= 3:
+                    add_item(iid, val[0], val[2], label, "商店商品")
+
+        data = self._cloud_data if isinstance(self._cloud_data, dict) else {}
+        products = data.get("products", [])
+        if isinstance(products, dict):
+            products = [{"id": k, **(v if isinstance(v, dict) else {"name": v})} for k, v in products.items()]
+        elif not isinstance(products, list):
+            products = []
+        for item in products[:1500]:
+            if not isinstance(item, dict):
+                continue
+            iid = str(item.get("item_no") or item.get("item_id") or item.get("id") or item.get("code") or "").strip()
+            if not iid:
+                continue
+            add_item(iid, item.get("name") or iid, item.get("description") or item.get("desc") or "云端自定义商品，可作为悬赏物品。",
+                     "YSGL 云端 · 商店", "云端商品")
+        cloud_items = data.get("items") or data.get("reward_items") or data.get("materials")
+        if isinstance(cloud_items, dict):
+            for iid, item in list(cloud_items.items())[:1500]:
+                if isinstance(item, dict):
+                    add_item(iid, item.get("name") or iid, item.get("description") or item.get("desc") or "云端同步材料/道具。", "YSGL 云端 · 材料", str(item.get("category") or "云端材料"))
+                else:
+                    add_item(iid, str(item), "云端同步材料/道具。", "YSGL 云端 · 材料", "云端材料")
+
+        # 5) Equipment blueprints. The reward becomes a real equipment record instead
+        # of a fake inventory item, so players can equip it immediately after winning.
+        def ingest_recipes(recipes: dict[str, Any], source: str) -> None:
+            for rid, recipe in list(recipes.items())[:500]:
+                if not isinstance(recipe, dict) or not recipe.get("name"):
+                    continue
+                rid = str(rid).strip()
+                if not rid:
+                    continue
+                equip_id = f"equipment:{rid}"
+                add_item(
+                    equip_id, recipe.get("name"), recipe.get("desc") or "可直接作为装备悬赏奖励。", source, "装备",
+                    reward_type="equipment", equipment_recipe_id=rid, slot=str(recipe.get("slot") or "主手"),
+                    rarity=str(recipe.get("rarity") or "普通"), level=max(1, min(100, int(recipe.get("level", 1) or 1))),
+                    attack=max(0, min(300, int(recipe.get("attack", 0) or 0))),
+                    defense=max(0, min(200, int(recipe.get("defense", 0) or 0))),
+                    explore_bonus=max(0, min(100, int(recipe.get("explore_bonus", 0) or 0))),
+                    revive_chance=max(0, min(100, int(recipe.get("revive_chance", 0) or 0))),
+                )
+
+        ingest_recipes(dict(CRAFTING_RECIPES), "插件内置 · 装备配方")
+        ingest_recipes(parse_catalog(self.config.get("crafting_recipe_json", "{}")), "本地自定义 · 装备配方")
+        ingest_recipes(parse_catalog(self.config.get("cloud_crafting_recipe_json", "{}")), "云端同步 · 装备配方")
+        cached_recipes = data.get("crafting_recipes")
+        if isinstance(cached_recipes, dict):
+            ingest_recipes(cached_recipes, "YSGL 云端 · 装备配方")
+        for equipment_key in ("equipment", "equipments", "equipment_catalog", "equipments_catalog"):
+            cached_equipment = data.get(equipment_key)
+            if isinstance(cached_equipment, list):
+                cached_equipment = {str(x.get("id") or x.get("code") or x.get("item_id") or i): x for i, x in enumerate(cached_equipment) if isinstance(x, dict)}
+            if isinstance(cached_equipment, dict):
+                ingest_recipes(cached_equipment, f"YSGL 云端 · {equipment_key}")
+
+        out = []
+        for row in catalog.values():
+            row.pop("_priority", None)
+            out.append(row)
+        return sorted(out, key=lambda x: (str(x.get("category", "")), str(x.get("source", "")), str(x.get("name", ""))))
+
+    async def page_worldplus_bounty_catalog(self):
+        denied=self._require_web(False)
+        if denied:return denied
+        refresh=str(request.query.get("refresh") or "0") == "1" if request else False
+        sync_message=""
+        if refresh and bool(self.config.get("cloud_enabled",False)) and str(self.config.get("cloud_api_key") or "").strip():
+            try:
+                result=await self._cloud_sync_if_due(force=True)
+                sync_message="云端目录已刷新。" if result.get("ok",True) else "云端刷新返回异常，使用本地缓存目录。"
+            except Exception as exc:
+                sync_message=f"云端刷新失败，已改用本地缓存：{str(exc)[:120]}"
+        catalog=self._build_bounty_reward_catalog()
+        return json_response({"ok":True,"catalog":catalog,"updated_at":int(time.time()),"refresh":refresh,"message":sync_message or "奖励目录已读取。"})
+
+    async def page_worldplus(self):
+        """Single Page bootstrap endpoint for World+; avoids split-route failures on older Dashboard builds."""
+        denied = self._require_web(False)
+        if denied:
+            return denied
+        self.db.expire_bounties()
+        bounties = []
+        for row in self.db.get_bounties(None, 100):
+            item = dict(row)
+            try:
+                item["reward_items"] = json.loads(str(item.get("reward_items_json") or "[]"))
+            except Exception:
+                item["reward_items"] = []
+            bounties.append(item)
+        boss = dict(self.db.get_global_boss())
+        ranking = [dict(x) for x in self.db.get_global_boss_ranking(20)]
+        catalog = self._build_bounty_reward_catalog()
+        return json_response({
+            "ok": True,
+            "bounties": bounties,
+            "global_boss": boss,
+            "global_boss_ranking": ranking,
+            "catalog": catalog,
+            "config": {k: self.config.get(k) for k in (
+                'bounty_enabled','bounty_default_duration_hours','bounty_challenge_timeout_seconds','bounty_player_daily_limit',
+                'bounty_player_max_open','bounty_min_coins','bounty_max_coins','bounty_publish_fee_coins','bounty_same_target_cooldown_seconds',
+                'world_map_enabled','world_travel_enabled','world_travel_base_cost','world_travel_cooldown_seconds','world_reputation_enabled',
+                'global_boss_enabled','global_boss_auto_spawn','global_boss_interval_hours','global_boss_name','global_boss_description',
+                'global_boss_max_hp','global_boss_attack','global_boss_defense','global_boss_skill_chance_percent','global_boss_duration_hours',
+                'global_boss_attack_cooldown_seconds','global_boss_stamina_cost','global_boss_participation_reward',
+                'global_boss_reward_pool_coins','global_boss_reward_pool_gems','global_boss_exp_per_1000_damage',
+                'global_boss_enrage_threshold_percent','global_boss_enrage_multiplier','global_boss_profile_json'
+            )}
+        })
+
+    async def page_worldplus_overview(self):
+        denied=self._require_web(False)
+        if denied:return denied
+        self.db.expire_bounties()
+        bounties=[]
+        for row in self.db.get_bounties(None,100):
+            item=dict(row)
+            try:item["reward_items"]=json.loads(str(item.get("reward_items_json") or "[]"))
+            except Exception:item["reward_items"]=[]
+            bounties.append(item)
+        boss=dict(self.db.get_global_boss())
+        ranking=[dict(x) for x in self.db.get_global_boss_ranking(20)]
+        return json_response({'ok':True,'bounties':bounties,'global_boss':boss,'global_boss_ranking':ranking,'config':{k:self.config.get(k) for k in ('bounty_enabled','bounty_default_duration_hours','bounty_challenge_timeout_seconds','bounty_player_daily_limit','bounty_player_max_open','bounty_min_coins','bounty_max_coins','bounty_publish_fee_coins','bounty_same_target_cooldown_seconds','world_map_enabled','world_travel_enabled','world_travel_base_cost','world_travel_cooldown_seconds','world_reputation_enabled','global_boss_enabled','global_boss_auto_spawn','global_boss_interval_hours','global_boss_name','global_boss_description','global_boss_max_hp','global_boss_attack','global_boss_defense','global_boss_skill_chance_percent','global_boss_duration_hours','global_boss_attack_cooldown_seconds','global_boss_stamina_cost','global_boss_participation_reward','global_boss_reward_pool_coins','global_boss_reward_pool_gems','global_boss_exp_per_1000_damage','global_boss_enrage_threshold_percent','global_boss_enrage_multiplier','global_boss_profile_json')}})
+
+    async def page_worldplus_bounty_create(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        target_ref=str(payload.get('target_user') or '').strip()
+        if not target_ref:return error_response('请填写目标玩家 UID / 用户 ID。',status_code=400)
+        target=self.db.find_player_by_uid(target_ref.upper())
+        if not target: target=self.db.get_player('__GLOBAL_USER__',target_ref)
+        if not target:return error_response('找不到目标玩家，请输入正确的玩家 UID 或平台用户 ID。',status_code=404)
+        if int(target['banned'] or 0):return error_response('目标玩家已被封禁，不能作为悬赏目标。',status_code=400)
+        title=str(payload.get('title') or '与指定冒险者进行正式决斗并取胜').strip()[:120]
+        desc=str(payload.get('description') or '').strip()[:1000]
+        try: hours=max(1,min(720,int(payload.get('duration_hours') or self.config.get('bounty_default_duration_hours',24) or 24)))
+        except Exception:return error_response('有效小时必须是整数。',status_code=400)
+        rewards=payload.get('rewards')
+        if isinstance(rewards,list) and len(rewards)>6:
+            return error_response('一个悬赏最多设置 6 项奖励。',status_code=400)
+        if not isinstance(rewards,list):
+            # Backward-compatible legacy fields.
+            rewards=[]
+            for typ,key in (("coins","reward_coins"),("gems","reward_gems"),("exp","reward_exp")):
+                try: amount=int(payload.get(key) or 0)
+                except Exception: amount=0
+                if amount>0: rewards.append({"type":typ,"amount":amount})
+        clean=[]; coins=gems=exp=total_items=0; seen_items=set()
+        catalog={x['item_id']:x for x in self._build_bounty_reward_catalog()}
+        if not rewards:return error_response('至少添加一种悬赏奖励。',status_code=400)
+        for raw_reward in rewards[:6]:
+            if not isinstance(raw_reward,dict):continue
+            typ=str(raw_reward.get('type') or '').strip().lower()
+            try: amount=int(raw_reward.get('amount') or raw_reward.get('qty') or 0)
+            except Exception: amount=0
+            if amount<=0:continue
+            if typ=='coins':
+                coins=min(200000,coins+amount); continue
+            if typ=='gems':
+                gems=min(1000,gems+amount); continue
+            if typ in {'exp','experience'}:
+                exp=min(200000,exp+amount); continue
+            if typ in {'item','equipment'}:
+                iid=str(raw_reward.get('item_id') or '').strip()
+                asset=catalog.get(iid)
+                if not asset:return error_response(f'悬赏资产「{iid or "空"}」不在当前可用目录，请点击“刷新物品”后重新选择。',status_code=400)
+                actual_type=str(asset.get('reward_type') or 'item')
+                if typ != actual_type and not (typ=='item' and actual_type=='item'):
+                    return error_response('所选悬赏资产类型与目录不匹配，请重新选择。',status_code=400)
+                if iid in seen_items:return error_response(f'资产「{asset["name"]}」不能重复添加，请直接修改数量。',status_code=400)
+                amount=min(100,amount)
+                if total_items+amount>200:return error_response('单个悬赏的物品/装备总数量不能超过 200。',status_code=400)
+                seen_items.add(iid); total_items+=amount
+                record={'item_id':iid,'item_name':asset['name'],'qty':amount,'source':asset.get('source',''), 'type':actual_type}
+                if actual_type=='equipment':
+                    for key in ('equipment_recipe_id','slot','rarity','level','attack','defense','explore_bonus','revive_chance'):
+                        if key in asset: record[key]=asset[key]
+                clean.append(record)
+                continue
+            return error_response(f'不支持的奖励类型：{typ or "空"}。',status_code=400)
+        if not (coins or gems or exp or clean):return error_response('奖励不能全部为 0。',status_code=400)
+        # Admin/system-funded bounties use fixed safety ceilings to protect the world economy.
+        if coins>200000 or gems>1000 or exp>200000:return error_response('悬赏奖励超过系统安全上限。',status_code=400)
+        bid=self.db.create_bounty(bounty_type='duel',title=title,description=desc,target_user_id=str(target['user_id']),target_name=str(target['name'] or '冒险者'),reward_coins=coins,reward_gems=gems,reward_exp=exp,reward_items=clean,expires_at=int(time.time())+hours*3600,created_by=self._web_username() or 'web',target_player_uid=str(target['player_uid'] or '').strip())
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','bounty_create',str(target['user_id']),f'id={bid};title={title};coins={coins};gems={gems};exp={exp};items={json.dumps(clean,ensure_ascii=False)};hours={hours}')
+        return json_response({'ok':True,'message':f'悬赏 #{bid} 已发布。','bounty_id':bid,'rewards':{'coins':coins,'gems':gems,'exp':exp,'items':clean}})
+
+    async def page_worldplus_bounty_cancel(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        bid=int(payload.get('bounty_id') or 0)
+        if bid<=0:return error_response('bounty_id 无效。',status_code=400)
+        result=self.db.cancel_bounty(bid)
+        if not result.get('ok'): return error_response(result.get('message','该悬赏不存在或当前状态不能取消。'),status_code=409)
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','bounty_cancel',str(bid),'')
+        return json_response({'ok':True,'message':f'悬赏 #{bid} 已取消。'})
+
+    async def page_worldplus_boss_save(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        changes=payload.get('changes') or {}
+        if not isinstance(changes,dict):return error_response('changes 必须是对象。',status_code=400)
+        allow={'global_boss_enabled','global_boss_auto_spawn','global_boss_interval_hours','global_boss_name','global_boss_description','global_boss_max_hp','global_boss_attack','global_boss_defense','global_boss_skill_chance_percent','global_boss_duration_hours','global_boss_attack_cooldown_seconds','global_boss_stamina_cost','global_boss_participation_reward','global_boss_reward_pool_coins','global_boss_reward_pool_gems','global_boss_exp_per_1000_damage','global_boss_enrage_threshold_percent','global_boss_enrage_multiplier','global_boss_profile_json'}
+        schema=self._schema
+        for k,v in changes.items():
+            if k not in allow:return error_response(f'不允许修改配置项：{k}',status_code=400)
+            spec=schema.get(k,{})
+            if spec.get('type')=='bool' and not isinstance(v,bool):return error_response(f'{k} 必须是布尔值',status_code=400)
+            if spec.get('type')=='int' and (not isinstance(v,int) or isinstance(v,bool)):return error_response(f'{k} 必须是整数',status_code=400)
+            if spec.get('type')=='float' and (not isinstance(v,(int,float)) or isinstance(v,bool)):return error_response(f'{k} 必须是数字',status_code=400)
+            if spec.get('type') in {'string','text'} and not isinstance(v,str):return error_response(f'{k} 必须是字符串',status_code=400)
+            sl=spec.get('slider');
+            if sl and isinstance(v,(int,float)) and not (sl['min']<=v<=sl['max']):return error_response(f'{k} 超出范围',status_code=400)
+            if k.endswith('_profile_json') or k=='global_boss_top_rewards_json':
+                try:json.loads(v or '{}')
+                except Exception:return error_response(f'{k} 不是有效 JSON',status_code=400)
+        for k,v in changes.items():self.config[k]=v
+        if not self._save_config_object(self.config):return error_response('Boss 配置保存失败，请检查 AstrBot 配置权限。',status_code=500)
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','global_boss_save',None,','.join(changes))
+        return json_response({'ok':True,'message':'大世界 Boss 配置已保存。','config':self._safe_config()})
+
+    async def page_worldplus_boss_spawn(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        text=self.engine.spawn_global_boss(bool(payload.get('force',False)))
+        if text.startswith('🌍🐉【大世界 Boss 降临】'):
+            await self._broadcast_all_groups(text)
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','global_boss_spawn',None,text[:500])
+        return json_response({'ok':True,'message':text,'boss':dict(self.db.get_global_boss())})
+
+    async def page_worldplus_boss_finish(self):
+        payload=await request.json(default={}) if request else {}
+        token=str(payload.get('token') or ''); denied=self._require_web(True,token)
+        if denied:return denied
+        text=self.engine.finish_global_boss('管理员手动结束')
+        if text.startswith('🏆【大世界 Boss 结束】'):
+            await self._broadcast_all_groups(text)
+        self.db.add_admin_log('__SYSTEM__',self._web_username() or 'web','global_boss_finish',None,text[:500])
+        return json_response({'ok':True,'message':text,'boss':dict(self.db.get_global_boss())})
 
     def _register_web_api(self) -> None:
         if not hasattr(self.context, "register_web_api") or not json_response:
@@ -3543,10 +4349,27 @@ class Main(Star):
             ("system/overview", self.page_system, ["GET"], "群聊世界系统运维聚合接口"),
             ("ops", self.page_system, ["GET"], "群聊世界系统运维兼容接口"),
             ("system/cleanup", self.page_system_cleanup, ["POST"], "群聊世界手动清理缓存"),
+            ("system/cleanup_cache", self.page_system_cleanup, ["POST"], "群聊世界手动清理缓存兼容路由"),
+            ("cache/clear", self.page_system_cleanup, ["POST"], "群聊世界清理可重建缓存"),
             ("menu/status", self.page_menu_status, ["GET"], "群聊世界帮助菜单图片状态"),
             ("menu/settings/save", self.page_menu_settings_save, ["POST"], "群聊世界保存帮助菜单设置"),
             ("menu/upload", self.page_menu_upload, ["POST"], "群聊世界上传帮助菜单图片"),
             ("menu/reset", self.page_menu_reset, ["POST"], "群聊世界恢复默认帮助菜单图片"),
+            ("world/settings", self.page_world_settings, ["GET"], "群聊世界世界设置读取"),
+            ("world/settings/get", self.page_world_settings, ["GET"], "群聊世界世界设置读取兼容路由"),
+            ("world_settings", self.page_world_settings, ["GET"], "群聊世界世界设置读取兼容路由"),
+            ("world/settings/save", self.page_world_settings_save, ["POST"], "群聊世界世界设置保存"),
+            ("world_settings/save", self.page_world_settings_save, ["POST"], "群聊世界世界设置保存兼容路由"),
+            ("worldplus", self.page_worldplus, ["GET"], "群聊世界+单页聚合接口"),
+            ("worldplus/home", self.page_worldplus, ["GET"], "群聊世界+兼容聚合接口"),
+            ("worldplus/overview", self.page_worldplus_overview, ["GET"], "群聊世界悬赏与大世界 Boss 总览"),
+            ("worldplus/bounty/catalog", self.page_worldplus_bounty_catalog, ["GET"], "群聊世界悬赏奖励物品目录"),
+            ("worldplus/bounty/items", self.page_worldplus_bounty_catalog, ["GET"], "群聊世界悬赏奖励物品兼容目录"),
+            ("worldplus/bounty/create", self.page_worldplus_bounty_create, ["POST"], "群聊世界后台发布悬赏"),
+            ("worldplus/bounty/cancel", self.page_worldplus_bounty_cancel, ["POST"], "群聊世界后台取消悬赏"),
+            ("worldplus/boss/save", self.page_worldplus_boss_save, ["POST"], "群聊世界保存大世界 Boss 配置"),
+            ("worldplus/boss/spawn", self.page_worldplus_boss_spawn, ["POST"], "群聊世界召唤大世界 Boss"),
+            ("worldplus/boss/finish", self.page_worldplus_boss_finish, ["POST"], "群聊世界结算大世界 Boss"),
             ("broadcasts", self.page_broadcasts, ["GET"], "群聊世界群发配置"),
             ("broadcast/campaigns", self.page_broadcast_campaigns, ["GET"], "群聊世界循环群发任务"),
             ("broadcast/campaign/save", self.page_broadcast_campaign_save, ["POST"], "群聊世界保存循环群发任务"),

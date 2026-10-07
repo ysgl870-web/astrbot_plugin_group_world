@@ -33,8 +33,8 @@
   "session_admin_allowed_actions": {
     "description": "🛡️ 会话管理员允许的管理动作",
     "type": "string",
-    "default": "状态",
-    "hint": "逗号分隔，例如：状态,查看。世界超级管理员不受此限制。"
+    "default": "状态,查看,世界设置",
+    "hint": "逗号分隔，例如：状态,查看,世界设置。世界超级管理员不受此限制。"
   },
   "web_admin_usernames": {
     "description": "🖥️ Web 超级管理员账号",
@@ -548,23 +548,23 @@
     }
   },
   "boss_max_hp": {
-    "description": "🐉 Boss 初始生命值",
+    "description": "🐉 Boss 初始生命值；运行时还有最终平衡上限。",
     "type": "int",
-    "default": 100000,
+    "default": 12000,
     "slider": {
-      "min": 1000,
-      "max": 100000000,
-      "step": 1000
+      "min": 3000,
+      "max": 30000,
+      "step": 500
     }
   },
   "boss_damage_base": {
-    "description": "🐉 Boss 基础伤害",
+    "description": "🐉 Boss 基础伤害；运行时还有最终平衡上限。",
     "type": "int",
-    "default": 80,
+    "default": 45,
     "slider": {
       "min": 10,
-      "max": 100000,
-      "step": 10
+      "max": 70,
+      "step": 5
     }
   },
   "boss_attack_cooldown_seconds": {
@@ -572,39 +572,39 @@
     "type": "int",
     "default": 10,
     "slider": {
-      "min": 1,
-      "max": 3600,
+      "min": 5,
+      "max": 60,
       "step": 1
     }
   },
   "boss_top_reward": {
-    "description": "🐉 Boss 第一名奖励",
+    "description": "🐉 Boss 第一名奖励；运行时还有最终平衡上限。",
     "type": "int",
     "default": 8000,
     "slider": {
       "min": 0,
-      "max": 1000000,
+      "max": 30000,
       "step": 100
     }
   },
   "boss_reward_decay": {
     "description": "🐉 Boss 每名排名递减奖励",
     "type": "int",
-    "default": 600,
+    "default": 10,
     "slider": {
       "min": 0,
-      "max": 100000,
-      "step": 50
+      "max": 100,
+      "step": 1
     }
   },
   "boss_min_reward": {
-    "description": "🐉 Boss 最低排名奖励",
+    "description": "🐉 Boss 最低排名奖励；运行时还有最终平衡上限。",
     "type": "int",
-    "default": 1000,
+    "default": 500,
     "slider": {
       "min": 0,
-      "max": 100000,
-      "step": 100
+      "max": 10000,
+      "step": 50
     }
   },
   "enable_auto_world_events": {
@@ -850,7 +850,7 @@
     "description": "探索危险分支中遭遇怪物的基础概率。",
     "slider": {
       "min": 1,
-      "max": 100,
+      "max": 35,
       "step": 1
     }
   },
@@ -867,7 +867,7 @@
   "monster_catalog_json": {
     "type": "text",
     "default": "{}",
-    "description": "自定义怪物模板 JSON。字段：name/hp/attack/defense/coins/exp/items/skills；skills 可配置 name/multiplier/chance/text/aoe。"
+    "description": "自定义怪物模板 JSON。字段：name/hp/attack/defense/coins/exp/items/skills；skills 可配置 name/multiplier/chance/text/aoe。；无论本地或云端自定义值多大，运行时都会按玩家等级与战斗上限缩放。"
   },
   "skill_system_enabled": {
     "type": "bool",
@@ -895,7 +895,7 @@
     "description": "怪物奖励倍率。",
     "slider": {
       "min": 0.1,
-      "max": 5.0,
+      "max": 2.0,
       "step": 0.1
     }
   },
@@ -939,21 +939,21 @@
   },
   "explore_monster_max_count": {
     "type": "int",
-    "default": 3,
+    "default": 2,
     "description": "👹 单次探索最多同时遭遇的怪物数量。",
     "slider": {
       "min": 1,
-      "max": 3,
+      "max": 2,
       "step": 1
     }
   },
   "explore_monster_multi_chance_percent": {
     "type": "int",
-    "default": 28,
+    "default": 18,
     "description": "👹 探索遇到怪物时，生成多只怪物的概率。",
     "slider": {
       "min": 0,
-      "max": 100,
+      "max": 35,
       "step": 1
     }
   },
@@ -1023,11 +1023,11 @@
   },
   "boss_skill_chance_percent": {
     "type": "int",
-    "default": 22,
+    "default": 18,
     "description": "🐉 Boss 使用特殊技能的概率。特殊技能可触发范围伤害。",
     "slider": {
       "min": 0,
-      "max": 100,
+      "max": 30,
       "step": 1
     }
   },
@@ -1145,6 +1145,201 @@
       "max": 1,
       "step": 0.05
     }
+  },
+  "bounty_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "启用悬赏系统（目前支持指定玩家正式决斗悬赏）。"
+  },
+  "bounty_default_duration_hours": {
+    "type": "int",
+    "default": 24,
+    "slider": {
+      "min": 1,
+      "max": 720,
+      "step": 1
+    },
+    "description": "后台发布悬赏默认有效时长（小时）。"
+  },
+  "bounty_challenge_timeout_seconds": {
+    "type": "int",
+    "default": 300,
+    "slider": {
+      "min": 30,
+      "max": 3600,
+      "step": 30
+    },
+    "description": "悬赏目标收到挑战后，等待接受的最长时间。"
+  },
+  "global_boss_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "启用大世界 Boss，所有群聊共享 Boss。"
+  },
+  "global_boss_auto_spawn": {
+    "type": "bool",
+    "default": true,
+    "description": "自动按间隔召唤大世界 Boss。"
+  },
+  "global_boss_interval_hours": {
+    "type": "int",
+    "default": 24,
+    "slider": {
+      "min": 1,
+      "max": 720,
+      "step": 1
+    },
+    "description": "大世界 Boss 自动召唤间隔。"
+  },
+  "global_boss_name": {
+    "type": "string",
+    "default": "灭世古龙",
+    "description": "大世界 Boss 默认名称。"
+  },
+  "global_boss_description": {
+    "type": "text",
+    "default": "来自深渊的古龙跨越世界边界出现，所有群聊玩家都可以共同挑战。",
+    "description": "大世界 Boss 描述。"
+  },
+  "global_boss_max_hp": {
+    "type": "int",
+    "default": 30000,
+    "slider": {
+      "min": 6000,
+      "max": 120000,
+      "step": 1000
+    },
+    "description": "大世界 Boss 初始生命。"
+  },
+  "global_boss_attack": {
+    "type": "int",
+    "default": 90,
+    "slider": {
+      "min": 25,
+      "max": 140,
+      "step": 5
+    },
+    "description": "大世界 Boss 反击基础攻击。"
+  },
+  "global_boss_defense": {
+    "type": "int",
+    "default": 45,
+    "slider": {
+      "min": 0,
+      "max": 90,
+      "step": 5
+    },
+    "description": "大世界 Boss 防御。"
+  },
+  "global_boss_skill_chance_percent": {
+    "type": "int",
+    "default": 18,
+    "slider": {
+      "min": 0,
+      "max": 35,
+      "step": 1
+    },
+    "description": "Boss 每次反击时释放“毁灭反击”的概率；触发后本次反击伤害提高。"
+  },
+  "global_boss_duration_hours": {
+    "type": "int",
+    "default": 6,
+    "slider": {
+      "min": 1,
+      "max": 12,
+      "step": 1
+    },
+    "description": "每轮大世界 Boss 最长持续时间。"
+  },
+  "global_boss_attack_cooldown_seconds": {
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 5,
+      "max": 60,
+      "step": 1
+    },
+    "description": "个人攻击间隔。"
+  },
+  "global_boss_stamina_cost": {
+    "type": "int",
+    "default": 12,
+    "slider": {
+      "min": 5,
+      "max": 40,
+      "step": 1
+    },
+    "description": "每次基础大世界 Boss 攻击至少消耗的体力。"
+  },
+  "global_boss_participation_reward": {
+    "type": "int",
+    "default": 100,
+    "slider": {
+      "min": 0,
+      "max": 1000,
+      "step": 10
+    },
+    "description": "非前三名参与奖励上限。"
+  },
+  "global_boss_reward_pool_coins": {
+    "type": "int",
+    "default": 60000,
+    "slider": {
+      "min": 0,
+      "max": 120000,
+      "step": 1000
+    },
+    "description": "大世界 Boss 本轮金币奖励池。"
+  },
+  "global_boss_reward_pool_gems": {
+    "type": "int",
+    "default": 60,
+    "slider": {
+      "min": 0,
+      "max": 150,
+      "step": 5
+    },
+    "description": "大世界 Boss 本轮钻石奖励池。"
+  },
+  "global_boss_exp_per_1000_damage": {
+    "type": "int",
+    "default": 20,
+    "slider": {
+      "min": 0,
+      "max": 80,
+      "step": 1
+    },
+    "description": "每造成 1000 点 Boss 伤害获得的额外经验系数。"
+  },
+  "global_boss_enrage_threshold_percent": {
+    "type": "int",
+    "default": 30,
+    "slider": {
+      "min": 10,
+      "max": 60,
+      "step": 5
+    },
+    "description": "Boss 剩余生命低于该百分比后进入狂暴。"
+  },
+  "global_boss_enrage_multiplier": {
+    "type": "float",
+    "default": 1.35,
+    "slider": {
+      "min": 1.0,
+      "max": 2.0,
+      "step": 0.05
+    },
+    "description": "Boss 狂暴后的反击伤害倍率。"
+  },
+  "global_boss_top_rewards_json": {
+    "type": "text",
+    "default": "{\"1\":{\"coins\":21000,\"gems\":21},\"2\":{\"coins\":13200,\"gems\":13},\"3\":{\"coins\":7800,\"gems\":8}}",
+    "description": "前三名额外奖励预设，仅作为后台可读配置；实际结算按本轮奖励池比例执行。"
+  },
+  "global_boss_profile_json": {
+    "type": "text",
+    "default": "{}",
+    "description": "可选的大世界 Boss 远程/本地 JSON Profile，字段与后台 Boss 设置一致。"
   },
   "cloud_enabled": {
     "type": "bool",
@@ -1311,7 +1506,7 @@
   "help_menu_settings": {
     "type": "object",
     "description": "🖼️ 帮助菜单设置",
-    "hint": "独立的 /帮助 菜单配置分区。可选择发送图片、文字以及发送顺序；若图片实际发送失败，插件会自动使用文字帮助兜底。自定义菜单图片请在群聊世界管理中心的“帮助菜单”分区上传。",
+    "hint": "独立的 /帮助 菜单配置分区。可选择发送图片、文字以及发送顺序；关闭“发送文字”后绝不会发送文字，包括图片发送失败时。",
     "items": {
       "image_enabled": {
         "type": "bool",
@@ -1323,7 +1518,7 @@
         "type": "bool",
         "default": true,
         "description": "发送文字帮助（同时作为图片失败时的文字兜底开关）",
-        "hint": "关闭后 /帮助 不发送文字；图片发送失败时也不会再发送文字兜底。"
+        "hint": "关闭后 /帮助 完全不发送文字；图片发送失败时也不会发送文字兜底。"
       },
       "image_first": {
         "type": "bool",
@@ -1344,5 +1539,172 @@
     "default": false,
     "invisible": true,
     "description": "帮助菜单配置迁移标记"
+  },
+  "bounty_player_daily_limit": {
+    "type": "int",
+    "default": 3,
+    "label": "玩家每日悬赏发布次数",
+    "slider": {
+      "min": 0,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "bounty_player_max_open": {
+    "type": "int",
+    "default": 3,
+    "label": "玩家同时进行中悬赏上限",
+    "slider": {
+      "min": 1,
+      "max": 10,
+      "step": 1
+    }
+  },
+  "bounty_min_coins": {
+    "type": "int",
+    "default": 100,
+    "label": "玩家悬赏最低金额",
+    "slider": {
+      "min": 10,
+      "max": 5000,
+      "step": 10
+    }
+  },
+  "bounty_max_coins": {
+    "type": "int",
+    "default": 20000,
+    "label": "玩家悬赏最高金额",
+    "slider": {
+      "min": 100,
+      "max": 100000,
+      "step": 100
+    }
+  },
+  "bounty_publish_fee_coins": {
+    "type": "int",
+    "default": 20,
+    "label": "玩家悬赏发布费",
+    "slider": {
+      "min": 0,
+      "max": 2000,
+      "step": 10
+    }
+  },
+  "bounty_same_target_cooldown_seconds": {
+    "type": "int",
+    "default": 21600,
+    "label": "同一目标悬赏冷却（秒）",
+    "slider": {
+      "min": 0,
+      "max": 604800,
+      "step": 600
+    }
+  },
+  "world_map_enabled": {
+    "type": "bool",
+    "default": true,
+    "label": "世界地图"
+  },
+  "world_travel_enabled": {
+    "type": "bool",
+    "default": true,
+    "label": "跨区旅行"
+  },
+  "world_travel_base_cost": {
+    "type": "int",
+    "default": 60,
+    "label": "旅行基础费用",
+    "slider": {
+      "min": 0,
+      "max": 1000,
+      "step": 10
+    }
+  },
+  "world_travel_cooldown_seconds": {
+    "type": "int",
+    "default": 600,
+    "label": "旅行冷却（秒）",
+    "slider": {
+      "min": 0,
+      "max": 86400,
+      "step": 60
+    }
+  },
+  "world_season_override": {
+    "type": "string",
+    "default": "自动",
+    "label": "世界季节",
+    "options": [
+      "自动",
+      "春季",
+      "夏季",
+      "秋季",
+      "冬季"
+    ]
+  },
+  "world_reputation_enabled": {
+    "type": "bool",
+    "default": true,
+    "label": "世界声望系统"
+  },
+  "world_reputation_checkin": {
+    "type": "int",
+    "default": 5,
+    "label": "签到声望",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "world_reputation_explore": {
+    "type": "int",
+    "default": 3,
+    "label": "探索声望",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
+  "world_reputation_duel_win": {
+    "type": "int",
+    "default": 15,
+    "label": "决斗胜利声望",
+    "slider": {
+      "min": 0,
+      "max": 200,
+      "step": 1
+    }
+  },
+  "world_reputation_duel_loss": {
+    "type": "int",
+    "default": -5,
+    "label": "决斗失败声望",
+    "slider": {
+      "min": -50,
+      "max": 0,
+      "step": 1
+    }
+  },
+  "world_reputation_bounty_reward": {
+    "type": "int",
+    "default": 25,
+    "label": "完成悬赏声望",
+    "slider": {
+      "min": 0,
+      "max": 200,
+      "step": 1
+    }
+  },
+  "world_reputation_boss": {
+    "type": "int",
+    "default": 10,
+    "label": "Boss 参与声望",
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
   }
 }

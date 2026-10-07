@@ -31,3 +31,6 @@
 - 普通用户投稿必须经过管理员审核。
 - 驳回需要填写原因。
 - 审核、停用用户、撤销 API Key、公告及设置变更会写入审计日志。
+
+
+V1.13.0：YSGL JSON 可额外发布 payload.bounty_templates 与 payload.global_boss；插件会安全读取为悬赏模板及大世界 Boss Profile，不执行 JSON 中的代码。
