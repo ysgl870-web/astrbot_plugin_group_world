@@ -22,3 +22,11 @@
 
 .menu-image-config img{background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(59,130,246,.08));}
 @media (max-width:780px){.menu-image-config{grid-template-columns:1fr!important}.menu-image-config img{max-height:280px!important}}
+
+
+/* v1.13.3: reliable world-play toggle rows on narrow/mobile plugin pages */
+.setting-switch{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:12px 14px;border:1px solid var(--border,#d9e2ef);border-radius:14px;background:var(--card,#fff);box-sizing:border-box;}
+.setting-switch > span{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.setting-switch small{font-weight:500;opacity:.62;}
+.setting-switch input[type=checkbox]{width:22px;height:22px;flex:0 0 auto;accent-color:#6b7cff;cursor:pointer;}
+.bounty-reward-row{grid-template-columns:minmax(92px,120px) minmax(160px,1fr) minmax(100px,130px) auto!important}.bounty-reward-row .br-amount{min-width:0}.bounty-reward-row .br-item{min-width:0}@media(max-width:680px){.bounty-reward-row{grid-template-columns:1fr 1fr!important}.bounty-reward-row .br-type{grid-column:1}.bounty-reward-row .br-amount{grid-column:2}.bounty-reward-row .br-item{grid-column:1/-1}.bounty-reward-row .br-remove{grid-column:1/-1;justify-self:start}}

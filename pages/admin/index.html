@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>群聊世界 · ysgl 控制中心</title>
-  <link rel="stylesheet" href="./style.css?v=1.11.29" />
+  <link rel="stylesheet" href="./style.css?v=1.13.5" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -24,7 +24,7 @@
       <nav id="nav" class="nav"><button type="button" data-tab="menu">🖼️ <span>帮助菜单</span></button></nav>
       <div class="sidebar-foot">
         <div>作者：<b>ysgl</b></div>
-        <div id="versionText">群聊世界 V1.11.29</div>
+        <div id="versionText">群聊世界 V1.13.1</div>
       </div>
     </aside>
 
@@ -132,6 +132,8 @@
     <div class="modal-card">
       <div class="modal-head"><div><div class="eyebrow">WORLD SETTINGS</div><h2>群世界设置</h2><p id="groupModalGroup" class="muted"></p></div><button id="groupModalClose" class="ghost">关闭</button></div>
       <div class="form-grid">
+        <label>世界地区<select id="gf_region"></select></label>
+        <label>世界阵营<select id="gf_faction"></select></label>
         <label>世界天气<input id="gf_weather" type="text"></label>
         <label>世界地点<input id="gf_location" type="text"></label>
         <label>世界事件<input id="gf_event_enabled" type="checkbox"></label>
@@ -147,6 +149,6 @@
       <div class="modal-actions"><button id="groupSave" class="primary">保存世界设置</button><button id="groupSpawnNpc" class="ghost">立即召唤 NPC</button><button id="groupEndEvent" class="ghost">结束当前事件</button><button id="groupClearNpc" class="ghost">让 NPC 离开</button></div>
     </div>
   </div>
-  <script type="module" src="./app.js?v=1.11.29"></script>
+  <script type="module" src="./app.js?v=1.13.5"></script>
 </body>
 </html>

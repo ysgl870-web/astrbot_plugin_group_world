@@ -1,13 +1,17 @@
 const bridge = window.AstrBotPluginPage;
-const state = { tab: 'overview', token: null, groups: [], groupId: null, settings: null, schema: null, players: [], search: '', groupSearch: '', summary: null, dynamicSeq: 0, _system: null, _broadcastCampaigns: [], _cloudPackages: [], _cloudSelected: [] , _cloudProductCatalog: [], _cloudAnnouncements: [], _cloudSite: {}, _cloudPackageSearch: '', _cloudPackageAuthor: '', _cloudPackageCategory: '', _cloudOnlySelected: false, _cloudProductSearch: '', _menu: {} };
+const state = { _worldplusPayload: null, tab: 'overview', token: null, groups: [], groupId: null, settings: null, schema: null, players: [], search: '', groupSearch: '', summary: null, dynamicSeq: 0, _system: null, _broadcastCampaigns: [], _cloudPackages: [], _cloudSelected: [] , _cloudProductCatalog: [], _cloudAnnouncements: [], _cloudSite: {}, _cloudPackageSearch: '', _cloudPackageAuthor: '', _cloudPackageCategory: '', _cloudOnlySelected: false, _cloudProductSearch: '', _menu: {}, _bountyCatalog: [] };
 const NAV = [
   ['menu','帮助菜单','🖼️'],['overview','概览','▦'],['groups','群组管理','⌂'],['players','玩家中心','♙'],['economy','经济流水','￥'],['events','世界事件','✦'],
-  ['system','系统运维','⚡'],['settings','高级配置','⚙'],['logs','审计日志','◌'],['tasks','任务系统','✓'],['tutorial','新手教程','?'],['cloud','云端玩法','☁']
+  ['worldplus','世界玩法+','🌍'],['system','系统运维','⚡'],['settings','高级配置','⚙'],['logs','审计日志','◌'],['tasks','任务系统','✓'],['tutorial','新手教程','?'],['cloud','云端玩法','☁']
 ];
-const TITLES = {overview:['概览','世界状态、活跃度、经济与系统健康度。'],groups:['群组管理','逐群控制世界开关、Boss、事件与运行状态。'],players:['玩家中心','查看更完整的成长、活跃、财富与教程状态。'],economy:['经济流水','追踪金币、钻石的每一笔流入和流出。'],events:['世界事件','查看历史事件、天气和世界变化记录。'],settings:['高级配置','细粒度控制经济、玩法、权限、教程与群级覆盖。'],logs:['审计日志','管理员操作与玩家行为审计，便于定位异常。'],tasks:['任务系统','查看今日每日任务的真实进度、完成状态和奖励。'],tutorial:['新手教程','查看玩家教程状态与真实完成情况。'],system:['系统运维','服务器资源、插件内存、缓存清理与逐群群发。'],menu:['帮助菜单','配置 /帮助 菜单图片与文字的发送方式、顺序和失败兜底。'],cloud:['云端玩法','连接 ysgl.bot.cd/astrbot，额外获取 Boss、商品、教程等自定义数据。']};
+const TITLES = {overview:['概览','世界状态、活跃度、经济与系统健康度。'],groups:['群组管理','逐群控制世界开关、Boss、事件与运行状态。'],players:['玩家中心','查看更完整的成长、活跃、财富与教程状态。'],economy:['经济流水','追踪金币、钻石的每一笔流入和流出。'],events:['世界事件','查看历史事件、天气和世界变化记录。'],settings:['高级配置','细粒度控制经济、玩法、权限、教程与群级覆盖。'],logs:['审计日志','管理员操作与玩家行为审计，便于定位异常。'],tasks:['任务系统','查看今日每日任务的真实进度、完成状态和奖励。'],worldplus:['世界玩法+','悬赏大厅与大世界 Boss 管理。'],tutorial:['新手教程','查看玩家教程状态与真实完成情况。'],system:['系统运维','服务器资源、插件内存、缓存清理与逐群群发。'],menu:['帮助菜单','配置 /帮助 菜单图片与文字的发送方式、顺序和失败兜底。'],cloud:['云端玩法','连接 ysgl.bot.cd/astrbot，额外获取 Boss、商品、教程等自定义数据。']};
 const $ = (id)=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function num(v){return Number(v||0).toLocaleString('zh-CN');}
+function settingSwitch(key,label,value=false){
+  const checked=!!value;
+  return `<label class="setting-switch field"><span><b>${esc(label)}</b><small>点击切换</small></span><input data-wp-setting="${esc(key)}" type="checkbox" ${checked?'checked':''}></label>`;
+}
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(window.__toast);window.__toast=setTimeout(()=>el.classList.remove('show'),2600);}
 function setTheme(ctx){document.documentElement.dataset.theme=ctx?.isDark?'dark':'light';}
 async function boot(){
@@ -26,23 +30,24 @@ async function apiGet(endpoint, params={}){return bridge.apiGet(endpoint,gparams
 async function apiPost(endpoint, body={}){return bridge.apiPost(endpoint,{...body,...(state.token?{token:state.token}:{})});}
 async function loadCore(){
   try{
-    const [ov,gs,ss]=await Promise.all([apiGet('overview'),apiGet('groups'),apiGet('settings')]);
+    const [ov,gs,ss]=await Promise.all([apiGet('overview',{worldplus:1}),apiGet('groups'),apiGet('settings')]);
     state.summary=ov.summary||{}; state.groups=gs.groups||ov.groups||[]; state.settings=ss.config||{}; state.schema=ss.schema||{};
+    state._worldplusPayload=ov.worldplus||state._worldplusPayload||null;
     if(state.groupId===null && state.groups.length) state.groupId=state.groups[0].group_id;
     renderGroupSelect(); render();
   }catch(e){ if(String(e.message).includes('无权')||String(e.message).includes('403')) showLogin(e.message); else toast(e.message||String(e)); }
 }
 function renderGroupSelect(){
   const sel=$('groupSelect');
-  const globalOnly=['players','economy','settings','tutorial','system','menu'];
+  const globalOnly=['players','economy','settings','tutorial','system','menu','worldplus'];
   if(globalOnly.includes(state.tab)){sel.style.display='none';return;}
   sel.style.display='block';
   sel.innerHTML=`<option value="">全部群组</option>`+state.groups.map(g=>`<option value="${esc(g.group_id)}" ${String(g.group_id)===String(state.groupId)?'selected':''}>${esc(g.group_id)} · ${g.player_count||0}位玩家</option>`).join('');
   sel.value=state.groupId===null?'':String(state.groupId);
   sel.onchange=()=>{state.groupId=sel.value;render();};
 }
-function render(){const [title,desc]=TITLES[state.tab];$('pageTitle').textContent=title;$('pageDesc').textContent=desc;renderGroupSelect();$('content').innerHTML=renderTab();attach();if(state.tab==='cloud')loadCloud();if(state.tab==='system')loadSystem();if(state.tab==='menu')loadMenu();}
-function renderTab(){switch(state.tab){case'overview':return renderOverview();case'groups':return renderGroups();case'players':return `<div id="playersRoot">加载玩家中…</div>`;case'economy':return `<div id="economyRoot">加载流水中…</div>`;case'events':return `<div id="eventsRoot">加载事件中…</div>`;case'settings':return renderSettings();case'logs':return `<div id="logsRoot">加载日志中…</div>`;case'tasks':return `<div id="tasksRoot">加载任务中…</div>`;case'tutorial':return `<div id="tutorialRoot">加载教程数据中…</div>`;case'system':return renderSystem();case'menu':return '<div id="menuRoot">加载帮助菜单设置中…</div>';case'cloud':return renderCloud();default:return '';}}
+function render(){const [title,desc]=TITLES[state.tab];$('pageTitle').textContent=title;$('pageDesc').textContent=desc;renderGroupSelect();$('content').innerHTML=renderTab();attach();if(state.tab==='cloud')loadCloud();if(state.tab==='system')loadSystem();if(state.tab==='menu')loadMenu();if(state.tab==='worldplus')loadWorldPlus();}
+function renderTab(){switch(state.tab){case'overview':return renderOverview();case'groups':return renderGroups();case'players':return `<div id="playersRoot">加载玩家中…</div>`;case'economy':return `<div id="economyRoot">加载流水中…</div>`;case'events':return `<div id="eventsRoot">加载事件中…</div>`;case'settings':return renderSettings();case'logs':return `<div id="logsRoot">加载日志中…</div>`;case'tasks':return `<div id="tasksRoot">加载任务中…</div>`;case'tutorial':return `<div id="tutorialRoot">加载教程数据中…</div>`;case'system':return renderSystem();case'menu':return '<div id="menuRoot">加载帮助菜单设置中…</div>';case'worldplus':return renderWorldPlus();case'cloud':return renderCloud();default:return '';}}
 function renderOverview(){const summary=state.summary||{};const total=Number(summary.players||0),coins=Number(summary.coins||0),msgs=Number(summary.messages||0),boss=state.groups.filter(g=>g.boss_active).length;const active=state.groups.reduce((a,g)=>a+Number(g.today_active_users||0),0);const avg=Number(summary.avg_level||0);const max=Math.max(1,...state.groups.map(g=>Number(g.player_count||0)));
  return `<div class="grid"><div class="metric"><div class="label">群组</div><div class="value">${state.groups.length}</div><div class="sub">已被插件记录的群</div></div><div class="metric"><div class="label">玩家</div><div class="value">${num(total)}</div><div class="sub">跨群角色总数</div></div><div class="metric"><div class="label">金币流通</div><div class="value">${num(coins)}</div><div class="sub">当前玩家余额合计</div></div><div class="metric"><div class="label">世界 Boss</div><div class="value">${boss}</div><div class="sub">当前活跃 Boss 数</div></div></div>
  <div class="split"><section class="card"><div class="card-head"><div><div class="card-title">世界运行概览</div><div class="section-desc">今日活跃、消息、平均等级与各群规模。</div></div><button class="ghost small" id="overviewRefresh">刷新</button></div><div class="stat-stack"><div class="mini"><div class="k">今日活跃用户</div><div class="v">${num(active)}</div></div><div class="mini"><div class="k">累计消息</div><div class="v">${num(msgs)}</div></div><div class="mini"><div class="k">平均等级</div><div class="v">${avg.toFixed(2)}</div></div><div class="mini"><div class="k">累计探索</div><div class="v">${num(state.groups.reduce((a,g)=>a+(g.total_explores||0),0))}</div></div></div><div class="bars" style="margin-top:18px">${state.groups.slice(0,10).map(g=>`<div class="bar-row"><span>${esc(g.group_id)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(Number(g.player_count||0)/max)*100)}%"></div></div><b>${g.player_count||0} 人</b></div>`).join('')||'<div class="empty">暂无群数据</div>'}</div></section>
@@ -71,7 +76,7 @@ function renderSystem(){
   const enabledCount=groups.filter(r=>r.enabled).length;
   const selected=groups;
   return `<div class="system-hero"><div><div class="eyebrow">SYSTEM OPERATIONS</div><h2>资源监控与群发中心</h2><p class="muted">服务器资源、缓存维护，以及独立的“立即群发 / 循环群发”配置中心。</p></div><button class="ghost" id="systemRefresh">刷新状态</button></div>
-  <div class="system-grid"><div class="system-metric"><span>服务器内存</span><b>${fmt(sv.memory_used)} / ${fmt(sv.memory_total)}</b><small>${Number(sv.memory_percent||0).toFixed(1)}% 已使用</small></div><div class="system-metric"><span>CPU</span><b>${Number(sv.cpu_percent||0).toFixed(1)}%</b><small>系统实时占用</small></div><div class="system-metric"><span>插件进程 RSS</span><b>${fmt(pr.rss)}</b><small>PID ${esc(pr.pid||'—')}</small></div><div class="system-metric"><span>插件追踪内存</span><b>${fmt(pl.tracemalloc_current)}</b><small>峰值 ${fmt(pl.tracemalloc_peak)}</small></div><div class="system-metric"><span>插件数据目录</span><b>${fmt(pl.data_size)}</b><small>数据库、配置等</small></div><div class="system-metric"><span>缓存目录</span><b>${fmt(pl.cache_size)}</b><small>可自动清理</small></div></div>
+  <div class="system-grid"><div class="system-metric"><span>服务器内存</span><b>${fmt(sv.memory_used)} / ${fmt(sv.memory_total)}</b><small>${Number(sv.memory_percent||0).toFixed(1)}% 已使用</small></div><div class="system-metric"><span>CPU</span><b>${Number(sv.cpu_percent||0).toFixed(1)}%</b><small>系统实时占用</small></div><div class="system-metric"><span>插件进程 RSS</span><b>${fmt(pr.rss)}</b><small>PID ${esc(pr.pid||'—')}</small></div><div class="system-metric"><span>插件追踪内存</span><b>${fmt(pl.tracemalloc_current)}</b><small>峰值 ${fmt(pl.tracemalloc_peak)}</small></div><div class="system-metric"><span>插件数据目录</span><b>${fmt(pl.data_size)}</b><small>数据库、配置等</small></div><div class="system-metric"><span>可清理缓存</span><b>${fmt(pl.cache_size)}</b><small>${num(pl.cache_files||0)} 个文件，可直接清理</small></div></div>
   <section class="card"><div class="card-head"><div><div class="card-title">内存与缓存管理</div><div class="section-desc">自动清理只处理可重建缓存，不会删除 SQLite 主数据库。</div></div><button class="danger" id="systemCleanup">立即清理</button></div><div class="form-grid"><label>自动清理<input id="sys_auto_cleanup" type="checkbox" ${cfg.maintenance_auto_cleanup?'checked':''}></label><label>清理时间（服务器本地）<input id="sys_cleanup_time" type="time" value="${esc(cfg.maintenance_cleanup_time||'04:30')}"></label><label>缓存保留天数<input id="sys_retention" type="number" min="0" max="365" value="${Number(cfg.maintenance_cache_retention_days||7)}"></label></div><div class="notice">插件内存展示分为<strong>进程 RSS</strong>与<strong>tracemalloc 追踪分配</strong>：后者是 Python 分配跟踪值，不代表整个进程占用。</div></section>
 
   <section class="card"><div class="card-head"><div><div class="card-title">📢 独立群发中心</div><div class="section-desc">先勾选目标群，再选择发送模式。立即群发按“群间隔”逐群发送；循环群发会持续保存任务并在每轮之间等待设定的循环间隔。</div></div><span class="pill good">已记录 ${groups.length} 群</span></div>
@@ -147,14 +152,104 @@ function renderMenuImageState(){
   if($('menuImagePreview')){const src=m.image_data_url||'';$('menuImagePreview').src=src;$('menuImagePreview').style.opacity=src?'1':'0.25';}
 }
 function bindMenuImageControls(){
-  $('menuImageUpload')?.addEventListener('click',async()=>{const file=$('menuImageFile')?.files?.[0];if(!file){toast('请先选择图片。');return}if(file.size>5*1024*1024){toast('图片不能超过 5 MB。');return}try{const r=await bridge.upload('menu/upload',file);const reader=new FileReader();reader.onload=()=>{state._menu={...state._menu,...r,image_data_url:String(reader.result||'')};renderMenuImageState();};reader.readAsDataURL(file);toast(r.message||'菜单图片已更新')}catch(e){toast(e.message||String(e))}});
-  $('menuImageSaveOptions')?.addEventListener('click',async()=>{try{const section={image_enabled:!!$('menuImageEnabled')?.checked,text_enabled:!!$('menuTextEnabled')?.checked,image_first:!!$('menuImageFirstYes')?.checked};const r=await apiPost('settings/save',{changes:{help_menu_settings:section,help_menu_image_enabled:section.image_enabled,help_menu_text_enabled:section.text_enabled,help_menu_image_first:section.image_first}});state.settings=r.config||state.settings;state._menu={...state._menu,send_image:section.image_enabled,enabled:section.image_enabled,send_text:section.text_enabled,first:section.image_first};renderMenuImageState();toast('帮助菜单设置已保存')}catch(e){toast(e.message||String(e))}});
-  $('menuImageReset')?.addEventListener('click',async()=>{if(!confirm('恢复默认菜单图片并启用图片优先？'))return;try{const r=await apiPost('menu/reset',{});state._menu={...state._menu,...r};const d=await apiGet('menu/status',{include_image:1});state._menu={...state._menu,...d};renderMenuImageState();toast(r.message||'已恢复默认')}catch(e){toast(e.message||String(e))}});
-  $('menuImageFile')?.addEventListener('change',()=>{const file=$('menuImageFile')?.files?.[0];if(!file||!$('menuImagePreview'))return;const url=URL.createObjectURL(file);$('menuImagePreview').src=url;$('menuImagePreview').style.opacity='1';});
+  const uploadBtn=$('menuImageUpload');
+  if(uploadBtn && !uploadBtn.dataset.bound){
+    uploadBtn.dataset.bound='1';
+    uploadBtn.addEventListener('click',async()=>{
+      const file=$('menuImageFile')?.files?.[0];
+      if(!file){toast('请先选择图片。');return}
+      if(file.size>5*1024*1024){toast('图片不能超过 5 MB。');return}
+      uploadBtn.disabled=true;
+      const oldText=uploadBtn.textContent;
+      uploadBtn.textContent='上传中…';
+      try{
+        let r=null;
+        let nativeError=null;
+        // AstrBot 官方 bridge.upload 使用 multipart/form-data + file 字段。
+        try{r=await bridge.upload('menu/upload',file)}catch(e){nativeError=e}
+        // 某些旧版 Dashboard/内嵌页面对 multipart bridge 支持不完整；使用同一路由
+        // 的 Base64 JSON 兜底，服务端同时支持 data: URL / 普通 Base64。
+        if(!r){
+          if(file.size>4.5*1024*1024){
+            throw nativeError||new Error('当前页面的文件上传接口不可用，且图片过大，不适合 Base64 兜底。请刷新 AstrBot WebUI 后重试。');
+          }
+          const imageBase64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>reject(new Error('读取图片失败。'));reader.readAsDataURL(file)});
+          r=await apiPost('menu/upload',{image_base64:imageBase64});
+        }
+        const localPreview=await new Promise((resolve)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>resolve('');reader.readAsDataURL(file)});
+        state._menu={...state._menu,...r,image_data_url:localPreview};
+        renderMenuImageState();
+        if($('menuImageFile'))$('menuImageFile').value='';
+        toast(r.message||'菜单图片已更新并启用');
+      }catch(e){
+        toast(e?.message||String(e)||'菜单图片上传失败');
+      }finally{
+        uploadBtn.disabled=false;uploadBtn.textContent=oldText||'上传并启用';
+      }
+    });
+  }
+  const saveBtn=$('menuImageSaveOptions');
+  if(saveBtn && !saveBtn.dataset.bound){
+    saveBtn.dataset.bound='1';
+    saveBtn.addEventListener('click',async()=>{
+      try{
+        const section={image_enabled:!!$('menuImageEnabled')?.checked,text_enabled:!!$('menuTextEnabled')?.checked,image_first:!!$('menuImageFirstYes')?.checked};
+        const r=await apiPost('menu/settings/save',{changes:section});
+        state.settings=r.config||state.settings;
+        state._menu={...state._menu,...r,send_image:section.image_enabled,enabled:section.image_enabled,send_text:section.text_enabled,first:section.image_first};
+        renderMenuImageState();
+        toast(r.message||'帮助菜单设置已保存');
+      }catch(e){toast(e?.message||String(e)||'帮助菜单设置保存失败')}
+    });
+  }
+  const resetBtn=$('menuImageReset');
+  if(resetBtn && !resetBtn.dataset.bound){
+    resetBtn.dataset.bound='1';
+    resetBtn.addEventListener('click',async()=>{
+      if(!confirm('恢复默认菜单图片并启用图片优先？'))return;
+      try{
+        const r=await apiPost('menu/reset',{});
+        state._menu={...state._menu,...r};
+        const d=await apiGet('menu/status',{include_image:1});
+        state._menu={...state._menu,...d};
+        renderMenuImageState();toast(r.message||'已恢复默认');
+      }catch(e){toast(e?.message||String(e)||'恢复默认失败')}
+    });
+  }
+  const fileInput=$('menuImageFile');
+  if(fileInput && !fileInput.dataset.bound){
+    fileInput.dataset.bound='1';
+    fileInput.addEventListener('change',()=>{
+      const file=fileInput.files?.[0];
+      if(!file||!$('menuImagePreview'))return;
+      const old=$('menuImagePreview').dataset.objectUrl;
+      if(old)URL.revokeObjectURL(old);
+      const url=URL.createObjectURL(file);
+      $('menuImagePreview').dataset.objectUrl=url;
+      $('menuImagePreview').src=url;
+      $('menuImagePreview').style.opacity='1';
+    });
+  }
 }
 
 async function saveSystemSettings(){const changes={maintenance_auto_cleanup:!!$('sys_auto_cleanup')?.checked,maintenance_cleanup_time:String($('sys_cleanup_time')?.value||'04:30'),maintenance_cache_retention_days:Number.parseInt($('sys_retention')?.value||'7',10),group_broadcast_default_message:String($('broadcastComposerMessage')?.value||''),group_broadcast_default_interval_minutes:Number.parseInt($('broadcastComposerInterval')?.value||'120',10)};try{const r=await apiPost('settings/save',{changes});state.settings=r.config||state.settings;toast('系统默认参数已保存');await loadSystem();}catch(e){toast(e.message||String(e));}}
-async function cleanupSystem(){if(!confirm('确认立即清理缓存？SQLite 主数据库不会被删除。'))return;try{const r=await apiPost('system/cleanup',{retention_days:Number.parseInt($('sys_retention')?.value||'7',10)});toast(`清理完成：${num(r.removed||0)} 个文件，释放 ${r.bytes||0} B`);await loadSystem();}catch(e){toast(e.message||String(e));}}
+async function cleanupSystem(){
+  const before=Number(state._system?.metrics?.plugin?.cache_size||0);
+  if(!confirm(`确认清理全部可重建缓存？当前约 ${before?((before/1024/1024).toFixed(2)+' MB'):'0 B'}。SQLite 主数据库不会被删除。`))return;
+  const btn=$('systemCleanup');
+  if(btn){btn.disabled=true;btn.dataset.oldText=btn.textContent;btn.textContent='清理中…';}
+  try{
+    const r=await apiPost('system/cleanup',{purge_all:true,retention_days:Number.parseInt($('sys_retention')?.value||'7',10)});
+    const after=Number(r.metrics?.plugin?.cache_size||0);
+    const released=Math.max(0,Number(r.bytes||0));
+    toast(`清理完成：删除 ${num(r.removed||0)} 个文件，释放 ${fmtBytesUi(released)}，当前缓存 ${fmtBytesUi(after)}`);
+    state._system={...(state._system||{}),metrics:r.metrics||state._system?.metrics};
+    renderSystem();
+    attach(); bindCampaignControls(); updateBroadcastSelection(); updateCampaignSelection(); bindMenuImageControls(); renderMenuImageState();
+  }catch(e){toast('清理缓存失败：'+(e.message||String(e)));}
+  finally{if(btn){btn.disabled=false;btn.textContent=btn.dataset.oldText||'立即清理';}}
+}
+function fmtBytesUi(v){const n=Number(v||0);if(!n)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0,z=n;while(z>=1024&&i<u.length-1){z/=1024;i++;}return `${z.toFixed(i?1:0)} ${u[i]}`;}
 function selectedCampaignIds(){return Array.from(document.querySelectorAll('.campaign-select:checked')).map(x=>String(x.dataset.campaignGroup||'')).filter(Boolean)}
 function updateCampaignSelection(){const n=selectedCampaignIds().length;if($('campaignSelectedCount'))$('campaignSelectedCount').textContent=String(n)}
 function setCampaignSelection(mode){document.querySelectorAll('.campaign-select').forEach(x=>{x.checked=mode==='all' || (mode==='enabled' && !!x.closest('tr')?.querySelector('.pill.good'))});updateCampaignSelection()}
@@ -183,6 +278,71 @@ function renderTasks(rows,summary,date){
 function renderTutorial(rows,counts){
   return `<section class="split"><div class="card"><div class="card-head"><div><div class="card-title">教程状态</div><div class="section-desc">展示玩家真实教程状态，不再只显示静态教程说明。</div></div><span class="pill good">完成 ${num(counts.completed||0)} 人</span></div><div class="grid"><div class="metric"><div class="label">进行中</div><div class="value">${num(counts.pending||0)}</div></div><div class="metric"><div class="label">已完成</div><div class="value">${num(counts.completed||0)}</div></div><div class="metric"><div class="label">已跳过</div><div class="value">${num(counts.skipped||0)}</div></div></div><div class="table-wrap"><table class="table"><thead><tr><th>玩家</th><th>教程状态</th><th>当前页</th><th>最近活跃</th></tr></thead><tbody>${rows.map(r=>`<tr><td><b>${esc(r.name||r.user_id)}</b><br><span class="code">${esc(r.user_id)}</span></td><td>${r.tutorial_status==='completed'?'✅ 已完成':(r.tutorial_status==='skipped'?'⏭️ 已跳过':'📖 进行中')}</td><td>${num(r.tutorial_step||0)}</td><td>${esc(r.last_seen_at||r.updated_at||'—')}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">暂无教程数据。</div></td></tr>'}</tbody></table></div></div><div class="card"><div class="card-head"><div class="card-title">教程流程</div></div>${[1,2,3,4,5,6].map((n,i)=>`<div class="notice" style="margin-top:10px"><strong>${n}. ${['认识世界','经济与体力','探索世界','装备与宠物','小游戏与 Boss','社交与长期成长'][i]}</strong><br>${['/世界 /我的 /帮助','签到、任务、体力与经济流水','地图、普通/深度/危险探索','宠物、装备、强化','小游戏与世界 Boss','排行榜、转账、成就与长期成长'][i]}</div>`).join('')}<div class="notice" style="margin-top:12px"><strong>自定义教程</strong><br>在“高级配置 → 教程 / 数据”中修改 <span class="code">tutorial_pages_json</span>。玩家可使用 <span class="code">/教程</span>、<span class="code">/继续教程</span>、<span class="code">/跳过教程</span>、<span class="code">/教程 重开</span>。</div></div></section>`;
 }
+function rewardTypeLabel(t){return ({coins:'金币',gems:'钻石',exp:'经验',item:'材料/道具',equipment:'装备'})[t]||t;}
+function bountyRewardRowHtml(defaultType='coins',defaultAmount=1000){return `<div class="bounty-reward-row" data-bounty-reward-row style="display:grid;grid-template-columns:120px 1fr 130px auto;gap:8px;align-items:center;margin-top:8px"><select class="br-type"><option value="coins" ${defaultType==='coins'?'selected':''}>金币</option><option value="gems" ${defaultType==='gems'?'selected':''}>钻石</option><option value="exp" ${defaultType==='exp'?'selected':''}>经验</option><option value="item" ${defaultType==='item'?'selected':''}>材料/道具</option><option value="equipment" ${defaultType==='equipment'?'selected':''}>装备</option></select><select class="br-item" ${['item','equipment'].includes(defaultType)?'':'style="display:none"'}></select><input class="br-amount" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" min="1" value="${String(Number(defaultAmount)||1)}" placeholder="请输入数量 / 数值" aria-label="奖励数量或数值"><button class="ghost small br-remove" type="button">删除</button></div>`;}
+function rewardCategoryLabel(x){return `${esc(x.name||x.item_id)} · ${esc(x.category||'可用资产')} · ${esc(x.source||'本地')}`;}
+function refreshBountyRewardItemSelects(){
+  const catalog=Array.isArray(state._bountyCatalog)?state._bountyCatalog:[];
+  document.querySelectorAll('.bounty-reward-row').forEach(row=>{
+    const select=row.querySelector('.br-item'); if(!select)return;
+    const type=String(row.querySelector('.br-type')?.value||'coins');
+    const old=select.value;
+    const allowed=type==='equipment'?catalog.filter(x=>String(x.reward_type||x.type||'item')==='equipment'):catalog.filter(x=>String(x.reward_type||x.type||'item')!=='equipment');
+    select.innerHTML=`<option value="">${allowed.length?'请选择奖励资产':'暂无可用资产，请先点击刷新物品'}</option>`+allowed.map(x=>`<option value="${esc(x.item_id)}">${rewardCategoryLabel(x)}</option>`).join('');
+    if(allowed.some(x=>String(x.item_id)===String(old)))select.value=old;
+  });
+}
+function bindBountyRewardRow(row){
+  const type=row.querySelector('.br-type'),item=row.querySelector('.br-item'),remove=row.querySelector('.br-remove'),amount=row.querySelector('.br-amount');
+  const sync=()=>{const isAsset=['item','equipment'].includes(type?.value);if(item)item.style.display=isAsset?'block':'none';if(item)item.setAttribute('aria-hidden',isAsset?'false':'true');if(amount){amount.inputMode='numeric';amount.pattern='[0-9]*';amount.value=String(amount.value||'').replace(/\D/g,'');}};
+  type?.addEventListener('change',()=>{sync();refreshBountyRewardItemSelects();});
+  amount?.addEventListener('input',()=>{amount.value=String(amount.value||'').replace(/\D/g,'').slice(0,9);});
+  remove?.addEventListener('click',()=>{const rows=document.querySelectorAll('[data-bounty-reward-row]');if(rows.length<=1){toast('至少保留一项奖励。');return;}row.remove();});
+  sync();
+}
+function addBountyRewardRow(type='coins',amount=1000){const root=$('bountyRewards');if(!root)return;root.insertAdjacentHTML('beforeend',bountyRewardRowHtml(type,amount));const row=root.lastElementChild;bindBountyRewardRow(row);refreshBountyRewardItemSelects();}
+function getBountyRewardsFromUI(){
+  const rows=[];document.querySelectorAll('[data-bounty-reward-row]').forEach(row=>{
+    const type=String(row.querySelector('.br-type')?.value||'coins');
+    const amount=Math.max(0,Number.parseInt(String(row.querySelector('.br-amount')?.value||'').replace(/\D/g,''),10));
+    if(!Number.isFinite(amount)||amount<=0)return;
+    const reward={type,amount};
+    if(type==='item'||type==='equipment')reward.item_id=String(row.querySelector('.br-item')?.value||'');
+    rows.push(reward);
+  });return rows;
+}
+function renderWorldPlus(){const s=state.settings||{};const v=(k,d='')=>s[k]??d;return `<div class="split"><section class="card"><div class="card-head"><div><div class="card-title">🎯 管理员悬赏中心</div><div class="section-desc">管理员发布的悬赏由系统托管；目标确认接受后才进入正式跨群决斗，胜者才结算奖励。取消或超时则退回托管金币。</div></div><div class="actions"><button class="ghost" id="bountyRefreshCatalog">↻ 刷新物品</button><button class="ghost" id="bountyRefresh">刷新悬赏</button></div></div><div class="form-grid"><div class="field"><label>目标玩家 UID / 平台 ID</label><input id="bountyTarget" placeholder="例如 GW-ABC12345"></div><div class="field"><label>悬赏标题</label><input id="bountyTitle" value="与指定冒险者进行正式决斗并取胜"></div><div class="field cloud-wide"><label>悬赏内容</label><textarea id="bountyDescription">向指定玩家发起一次正式跨群决斗。目标必须确认接受，胜者获得全部配置奖励。</textarea></div><div class="field"><label>有效时间（小时）</label><input id="bountyHours" type="number" min="1" max="720" value="${esc(v('bounty_default_duration_hours',24))}"></div></div><div class="field" style="margin-top:12px"><label>悬赏奖励</label><div class="hint">最多 6 项。可选金币、钻石、经验、怪物掉落材料、商店道具、装备配方，以及 YSGL 云端同步资产。点击“刷新物品”重新构建目录。</div><div id="bountyRewards">${bountyRewardRowHtml('coins',5000)}</div><div class="actions" style="margin-top:10px"><button class="ghost small" id="bountyAddReward">＋ 添加奖励</button><span id="bountyCatalogHint" class="hint" style="align-self:center">奖励目录：首次进入自动读取</span></div></div><div class="notice" style="margin-top:12px">安全上限：金币 ≤ 200,000；钻石 ≤ 1,000；经验 ≤ 200,000；单悬赏物品总数量 ≤ 200。刷新物品时优先同步云端目录，失败则使用本地缓存。</div><div class="actions" style="margin-top:12px"><button class="primary" id="bountyCreate">发布悬赏</button></div><div id="bountyList" class="table-wrap" style="margin-top:14px"><div class="empty">加载中…</div></div></section><section class="card"><div class="card-head"><div><div class="card-title">🌍🐉 大世界 Boss</div><div class="section-desc">所有群聊共享一个 Boss；后台配置和运行时都有数值上限，避免怪物/Boss 过强或奖励失控。</div></div></div><div class="notice" id="globalBossState">加载中…</div><div class="form-grid" style="margin-top:12px">${settingSwitch('global_boss_enabled','启用大世界 Boss',v('global_boss_enabled',true))}${settingSwitch('global_boss_auto_spawn','自动召唤',v('global_boss_auto_spawn',true))}<div class="field"><label>自动召唤间隔（小时）</label><input data-wp-setting="global_boss_interval_hours" type="number" min="1" max="720" value="${esc(v('global_boss_interval_hours',24))}"></div><div class="field"><label>Boss 名称</label><input data-wp-setting="global_boss_name" value="${esc(v('global_boss_name','灭世古龙'))}"></div><div class="field cloud-wide"><label>Boss 描述</label><input data-wp-setting="global_boss_description" value="${esc(v('global_boss_description','所有群聊共享的世界 Boss'))}"></div><div class="field"><label>最大生命</label><input data-wp-setting="global_boss_max_hp" type="number" min="6000" max="120000" step="1000" value="${esc(v('global_boss_max_hp',30000))}"></div><div class="field"><label>基础攻击</label><input data-wp-setting="global_boss_attack" type="number" min="25" max="140" step="5" value="${esc(v('global_boss_attack',90))}"></div><div class="field"><label>防御</label><input data-wp-setting="global_boss_defense" type="number" min="0" max="90" step="5" value="${esc(v('global_boss_defense',45))}"></div><div class="field"><label>技能概率 %</label><input data-wp-setting="global_boss_skill_chance_percent" type="number" min="0" max="35" value="${esc(v('global_boss_skill_chance_percent',18))}"></div><div class="field"><label>持续时间（小时）</label><input data-wp-setting="global_boss_duration_hours" type="number" min="1" max="12" value="${esc(v('global_boss_duration_hours',6))}"></div><div class="field"><label>攻击冷却（秒）</label><input data-wp-setting="global_boss_attack_cooldown_seconds" type="number" min="5" max="60" value="${esc(v('global_boss_attack_cooldown_seconds',8))}"></div><div class="field"><label>单次攻击体力</label><input data-wp-setting="global_boss_stamina_cost" type="number" min="5" max="40" value="${esc(v('global_boss_stamina_cost',12))}"></div><div class="field"><label>参与奖励</label><input data-wp-setting="global_boss_participation_reward" type="number" min="0" max="1000" value="${esc(v('global_boss_participation_reward',100))}"></div><div class="field"><label>金币奖励池</label><input data-wp-setting="global_boss_reward_pool_coins" type="number" min="0" max="120000" step="1000" value="${esc(v('global_boss_reward_pool_coins',60000))}"></div><div class="field"><label>钻石奖励池</label><input data-wp-setting="global_boss_reward_pool_gems" type="number" min="0" max="150" step="5" value="${esc(v('global_boss_reward_pool_gems',60))}"></div><div class="field"><label>每 1000 伤害经验</label><input data-wp-setting="global_boss_exp_per_1000_damage" type="number" min="0" max="80" value="${esc(v('global_boss_exp_per_1000_damage',20))}"></div><div class="field"><label>狂暴阈值 %</label><input data-wp-setting="global_boss_enrage_threshold_percent" type="number" min="10" max="60" step="5" value="${esc(v('global_boss_enrage_threshold_percent',30))}"></div><div class="field"><label>狂暴倍率</label><input data-wp-setting="global_boss_enrage_multiplier" type="number" min="1" max="2" step="0.05" value="${esc(v('global_boss_enrage_multiplier',1.35))}"></div><div class="field cloud-wide"><label>高级 Boss Profile JSON</label><textarea data-wp-setting="global_boss_profile_json">${esc(v('global_boss_profile_json','{}'))}</textarea></div></div><div class="actions" style="margin-top:12px"><button class="primary" id="globalBossSave">保存 Boss 配置</button><button class="ghost" id="globalBossSpawn">立即召唤</button><button class="danger" id="globalBossFinish">立即结束并结算</button></div></section></div>`;}
+async function loadWorldPlus(options={}){
+  try{
+    let data=state._worldplusPayload;
+    if(options.refresh || !data){
+      try{
+        const ov=await apiGet('overview',{worldplus:1,refresh:options.refresh?1:0});
+        data=ov.worldplus||null;
+        if(data)state._worldplusPayload=data;
+      }catch(stableErr){
+        try{data=await apiGet('worldplus');}
+        catch(primary){
+          try{data=await apiGet('worldplus/home');}
+          catch(alias){data=await apiGet('worldplus/overview');}
+        }
+      }
+    }
+    if(!data)throw new Error('世界玩法数据接口没有返回配置，请重启一次 AstrBot 让插件重新注册 Web API。');
+    state._bountyCatalog=Array.isArray(data.catalog)?data.catalog:[];
+    renderWorldPlusData(data);
+    refreshBountyRewardItemSelects();
+    if($('bountyCatalogHint'))$('bountyCatalogHint').textContent=`奖励目录：${num(state._bountyCatalog.length)} 项（含怪物材料/商店/装备/云端）`;
+  }catch(e){
+    const msg=e.message||String(e);
+    toast('世界玩法加载失败：'+msg);
+    const root=$('bountyList');
+    if(root)root.innerHTML=`<div class="empty"><b>世界玩法配置暂时无法读取</b><br><span class="muted">${esc(msg)}</span><br><button class="ghost small" id="worldplusRetry" style="margin-top:10px">重新读取</button></div>`;
+    setTimeout(()=>{const b=$('worldplusRetry');if(b)b.onclick=()=>loadWorldPlus({refresh:false});},0);
+  }
+}
+
+function renderWorldPlusData(r){const root=$('bountyList');if(root){const st={open:'开放',challenge:'等待目标接受',dueling:'决斗中',completed:'已完成',expired:'已过期',cancelled:'已取消'};root.innerHTML=(r.bounties||[]).map(x=>{const rewards=[];if(Number(x.reward_coins||0))rewards.push('💰 '+num(x.reward_coins));if(Number(x.reward_gems||0))rewards.push('💎 '+num(x.reward_gems));if(Number(x.reward_exp||0))rewards.push('⭐ '+num(x.reward_exp)+' EXP');(x.reward_items||[]).slice(0,6).forEach(i=>rewards.push('🎒 '+esc(i.item_name||i.item_id||'物品')+' ×'+num(i.qty||1)));return `<div class="table-wrap" style="margin-bottom:10px"><table class="table"><thead><tr><th>#</th><th>标题 / 目标</th><th>奖励</th><th>状态</th><th>操作</th></tr></thead><tbody><tr><td>${x.id}</td><td><b>${esc(x.title)}</b><br><span class="muted">目标：${esc(x.target_player_uid||x.target_name||x.target_user_id||'')}</span><br><span class="muted">${esc(x.description||'')}</span></td><td>${rewards.join(' · ')||'无奖励'}</td><td>${esc(st[x.status]||x.status)}</td><td>${['open','challenge'].includes(x.status)?`<button class="ghost small" data-bounty-cancel="${x.id}">取消悬赏</button>`:'—'}</td></tr></tbody></table></div>`;}).join('')||'<div class="empty">暂无悬赏。</div>';}const b=r.global_boss||{};const stateEl=$('globalBossState');if(stateEl)stateEl.innerHTML=b.active?`当前：<b>${esc(b.name||'世界 Boss')}</b> · HP ${num(b.hp)}/${num(b.max_hp)} · 攻击 ${num(b.attack)} · 防御 ${num(b.defense)} · 奖励池 💰${num(b.reward_pool_coins)} / 💎${num(b.reward_pool_gems)}`:'当前没有活动中的大世界 Boss。';}
 function renderCloud(){
   const cloud=(key,def='')=>state.settings?.[key]??def;
   const secret=String(cloud('cloud_api_key',''));
@@ -410,30 +570,8 @@ function renderPlayers(){return `<section class="card"><div class="card-head"><d
 function renderEconomy(rows){return `<section class="card"><div class="card-head"><div><div class="card-title">经济流水</div><div class="section-desc">所有钱包变化都进入流水表，管理员可核查余额变化原因。</div></div></div><div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>用户</th><th>类型</th><th>金币变化</th><th>钻石变化</th><th>变更后余额</th><th>备注</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.created_at)}</td><td class="code">${esc(r.user_id)}</td><td>${esc(r.kind)}</td><td class="${r.coins_delta>0?'good':''}">${r.coins_delta>0?'+':''}${num(r.coins_delta)}</td><td>${r.gems_delta>0?'+':''}${num(r.gems_delta)}</td><td>${num(r.coins_balance)} / 💎${num(r.gems_balance)}</td><td>${esc(r.note)}</td></tr>`).join('')||'<tr><td colspan="7"><div class="empty">暂无流水</div></td></tr>'}</tbody></table></div></section>`;}
 function renderEvents(rows,gid){return `<section class="card"><div class="card-head"><div><div class="card-title">世界事件历史</div><div class="section-desc">${gid?`当前群：${esc(gid)}`:'当前显示全部群组'} · 天气、事件类型、触发来源和描述都会保留下来。</div></div><button class="ghost small" id="eventsRefresh">刷新</button></div><div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>类型</th><th>标题</th><th>天气</th><th>地点</th><th>触发者</th><th>详情</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.created_at)}</td><td>${esc(r.event_type)}</td><td>${esc(r.title)}</td><td>${esc(r.weather||'')}</td><td>${esc(r.location||'')}</td><td>${esc(r.triggered_by||'自动')}</td><td>${esc(r.description)}</td></tr>`).join('')||'<tr><td colspan="7"><div class="empty">暂无事件</div></td></tr>'}</tbody></table></div></section>`;}
 function renderLogs(d,gid){return `<section class="split"><div class="card"><div class="card-head"><div class="card-title">管理员审计</div><div class="section-desc">${gid?`当前群：${esc(gid)}`:'当前显示全部群组'}</div></div><div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>管理员</th><th>动作</th><th>目标</th><th>详情</th></tr></thead><tbody>${(d.admin_logs||[]).map(r=>`<tr><td>${esc(r.created_at)}</td><td>${esc(r.admin_id)}</td><td>${esc(r.action)}</td><td>${esc(r.target_user_id||'')}</td><td>${esc(r.detail)}</td></tr>`).join('')||'<tr><td colspan="5"><div class="empty">暂无日志</div></td></tr>'}</tbody></table></div></div><div class="card"><div class="card-head"><div class="card-title">玩家行为</div></div><div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>详情</th></tr></thead><tbody>${(d.action_logs||[]).map(r=>`<tr><td>${esc(r.created_at)}</td><td>${esc(r.user_id)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">暂无行为</div></td></tr>'}</tbody></table></div></div></section>`;}
-function openGroupEditor(groupId){
-  const g=state.groups.find(x=>String(x.group_id)===String(groupId));
-  if(!g){toast('群聊数据不存在');return;}
-  const set=(id,v)=>{const el=$(id);if(el)el.value=v??'';};
-  const check=(id,v)=>{const el=$(id);if(el)el.checked=!!v;};
-  const modalLabel=$('groupModalGroup'); if(modalLabel)modalLabel.textContent=`群 ID：${groupId}`;
-  set('gf_weather',g.world_weather);set('gf_location',g.world_location);
-  check('gf_event_enabled',g.world_event_enabled);check('gf_explore_enabled',g.explore_enabled);check('gf_monster_enabled',g.monster_enabled);
-  set('gf_monster_chance',g.monster_chance_percent??16);set('gf_monster_max',g.monster_max_count??3);set('gf_monster_multi',g.monster_multi_chance_percent??28);
-  check('gf_npc_enabled',g.npc_enabled);set('gf_npc_chance',g.npc_chance_percent??10);set('gf_npc_interval',g.npc_interval_minutes??120);
-  const modal=$('groupModal'); if(modal)modal.dataset.group=String(groupId);
-  modal?.classList.remove('hidden');
-}
-async function saveGroupSettings(){
-  const modal=$('groupModal'); const groupId=modal?.dataset.group||'';
-  if(!groupId){toast('未选择群聊');return;}
-  const val=id=>$(id)?.value||''; const checked=id=>!!$(id)?.checked;
-  try{
-    const r=await apiPost('group/action',{group_id:groupId,action:'save_settings',settings:{world_weather:val('gf_weather').trim(),world_location:val('gf_location').trim(),world_event_enabled:checked('gf_event_enabled')?1:0,explore_enabled:checked('gf_explore_enabled')?1:0,monster_enabled:checked('gf_monster_enabled')?1:0,monster_chance_percent:Number(val('gf_monster_chance')),monster_max_count:Number(val('gf_monster_max')),monster_multi_chance_percent:Number(val('gf_monster_multi')),npc_enabled:checked('gf_npc_enabled')?1:0,npc_chance_percent:Number(val('gf_npc_chance')),npc_interval_minutes:Number(val('gf_npc_interval'))}});
-    toast(r.message||'群世界设置已保存');
-    modal.classList.add('hidden');
-    await loadCore();
-  }catch(e){toast(e.message||String(e));}
-}
+async function openGroupEditor(groupId){const g=state.groups.find(x=>String(x.group_id)===String(groupId));if(!g){toast('群聊数据不存在');return;}const set=(id,v)=>{const el=$(id);if(el)el.value=v??'';};const check=(id,v)=>{const el=$(id);if(el)el.checked=!!v;};const modal=$('groupModal');if(modal)modal.dataset.group=String(groupId);const label=$('groupModalGroup');if(label)label.textContent=`群 ID：${groupId}`;try{let d;try{d=await apiGet('world/settings',{group_id:String(groupId)});}catch(first){d=await apiGet('world_settings',{group_id:String(groupId)});}const world=d.group||g;const regions=Array.isArray(d.regions)?d.regions:[];const factions=Array.isArray(d.factions)?d.factions:['王国','联盟','深渊','自然','中立'];const rs=$('gf_region'),fs=$('gf_faction');if(rs)rs.innerHTML=regions.map(r=>`<option value="${esc(r.id)}">${esc(r.name)} · T${num(r.tier||1)} · ${esc(r.desc||'')}</option>`).join('');if(fs)fs.innerHTML=factions.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('');set('gf_region',world.world_region_id||'starter');set('gf_faction',world.world_faction||'中立');set('gf_weather',world.world_weather||'晴朗');set('gf_location',world.world_location||'');check('gf_event_enabled',world.world_event_enabled??1);check('gf_explore_enabled',world.explore_enabled??1);check('gf_monster_enabled',world.monster_enabled??1);set('gf_monster_chance',Math.min(35,world.monster_chance_percent??16));set('gf_monster_max',Math.min(2,world.monster_max_count??2));set('gf_monster_multi',Math.min(35,world.monster_multi_chance_percent??18));check('gf_npc_enabled',world.npc_enabled??1);set('gf_npc_chance',Math.min(35,world.npc_chance_percent??10));set('gf_npc_interval',world.npc_interval_minutes??120);modal?.classList.remove('hidden');}catch(e){toast('世界设置读取失败：'+(e.message||String(e)));}}
+async function saveGroupSettings(){const modal=$('groupModal');const groupId=modal?.dataset.group||'';if(!groupId){toast('未选择群聊');return;}const val=id=>$(id)?.value||'';const checked=id=>!!$(id)?.checked;try{const body={group_id:String(groupId),settings:{world_region_id:val('gf_region'),world_faction:val('gf_faction'),world_weather:val('gf_weather').trim(),world_location:val('gf_location').trim(),world_event_enabled:checked('gf_event_enabled'),explore_enabled:checked('gf_explore_enabled'),monster_enabled:checked('gf_monster_enabled'),monster_chance_percent:Number(val('gf_monster_chance')),monster_max_count:Number(val('gf_monster_max')),monster_multi_chance_percent:Number(val('gf_monster_multi')),npc_enabled:checked('gf_npc_enabled'),npc_chance_percent:Number(val('gf_npc_chance')),npc_interval_minutes:Number(val('gf_npc_interval'))}};let r;try{r=await apiPost('world/settings/save',body);}catch(first){r=await apiPost('world_settings/save',body);}toast(r.message||'世界设置已保存');modal.classList.add('hidden');await loadCore();}catch(e){toast('世界设置保存失败：'+(e.message||String(e)));}}
 function closeGroupEditor(){$('groupModal')?.classList.add('hidden');}
 
 async function openPlayerEditor(user){
@@ -483,6 +621,15 @@ function attach(){
   bind('exportBtn','onclick',exportData);
   bind('overviewRefresh','onclick',()=>loadCore());
   bind('refreshBtn','onclick',()=>loadCore());
+  bind('bountyAddReward','onclick',()=>{if(document.querySelectorAll('[data-bounty-reward-row]').length>=6){toast('一个悬赏最多 6 项奖励。');return;}addBountyRewardRow('coins',1000);});
+  bind('bountyRefreshCatalog','onclick',async()=>{try{await loadWorldPlus({refresh:true});toast(`物品目录已刷新，共 ${state._bountyCatalog.length} 项`);}catch(e){toast('刷新物品失败：'+(e.message||String(e)));}});
+  bind('bountyCreate','onclick',async()=>{try{const rewards=getBountyRewardsFromUI();if(!rewards.length){toast('请至少添加一项奖励。');return;}const r=await apiPost('worldplus/bounty/create',{target_user:String($('bountyTarget')?.value||''),title:String($('bountyTitle')?.value||''),description:String($('bountyDescription')?.value||''),rewards,duration_hours:Number($('bountyHours')?.value||24)});toast(r.message||'悬赏已发布');await loadWorldPlus({refresh:false});}catch(e){toast(e.message||String(e));}});
+  document.querySelectorAll('[data-bounty-reward-row]').forEach(bindBountyRewardRow);refreshBountyRewardItemSelects();
+  bind('bountyRefresh','onclick',loadWorldPlus); bind('globalBossRefresh','onclick',loadWorldPlus);
+  bind('globalBossSave','onclick',async()=>{try{const changes={};document.querySelectorAll('[data-wp-setting]').forEach(el=>{const k=el.dataset.wpSetting;if(el.type==='checkbox')changes[k]=el.checked;else if(k.endsWith('_profile_json'))changes[k]=el.value;else if(['global_boss_name','global_boss_description'].includes(k))changes[k]=el.value;else changes[k]=Number(el.value||0);});const r=await apiPost('worldplus/boss/save',{changes});state.settings=r.config||state.settings;toast(r.message||'Boss 配置已保存');await loadWorldPlus();}catch(e){toast(e.message||String(e));}});
+  bind('globalBossSpawn','onclick',async()=>{try{const r=await apiPost('worldplus/boss/spawn',{});toast(r.message||'已召唤');await loadWorldPlus();}catch(e){toast(e.message||String(e));}});
+  bind('globalBossFinish','onclick',async()=>{try{const r=await apiPost('worldplus/boss/finish',{});toast(r.message||'已结算');await loadWorldPlus();}catch(e){toast(e.message||String(e));}});
+  document.querySelectorAll('[data-bounty-cancel]').forEach(b=>b.onclick=async()=>{try{const r=await apiPost('worldplus/bounty/cancel',{bounty_id:Number(b.dataset.bountyCancel)});toast(r.message||'已取消');await loadWorldPlus();}catch(e){toast(e.message||String(e));}});
   bind('cloudSaveConfig','onclick',()=>saveCloudConfig()); bind('cloudTest','onclick',async()=>{try{await saveCloudConfig({silent:true,refresh:false});const r=await apiGet('cloud/test');toast(r.message||'连接正常');await loadCloud();}catch(e){toast(e.message||String(e));}}); bind('cloudSync','onclick',async()=>{try{await saveCloudConfig({silent:true,refresh:false});const r=await apiPost('cloud/sync',{});toast('云端目录同步完成');await loadCloud();}catch(e){toast(e.message||String(e));}}); bind('cloudSelectAll','onclick',()=>updateCloudSelection(cloudFilteredPackages().map(x=>x.package_no||x.id))); bind('cloudClearSelection','onclick',()=>updateCloudSelection([])); bind('cloudSaveSelection','onclick',saveCloudSelection); bind('cloudExport','onclick',async()=>{try{const r=await bridge.download('cloud/export',gparams({}),'group-world-cloud-package.json');toast(`导出完成：${r.filename||'group-world-cloud-package.json'}`);}catch(e){toast(e.message||String(e));}}); bind('cloudLocalExport','onclick',async()=>{try{const r=await bridge.download('cloud/local-export',gparams({}),'group-world-local-custom-package.json');toast(`导出完成：${r.filename||'group-world-local-custom-package.json'}`);}catch(e){toast(e.message||String(e));}}); bind('cloudPackageSearchBtn','onclick',()=>{state._cloudPackageSearch=$('cloudPackageSearch')?.value||'';state._cloudPackageAuthor=$('cloudPackageAuthor')?.value||'';state._cloudPackageCategory=$('cloudPackageCategory')?.value||'';state._cloudOnlySelected=!!$('cloudOnlySelected')?.checked;renderCloudPackages(state._cloudPackages);}); bind('cloudPackageSearch','onkeydown',e=>{if(e.key==='Enter')$('cloudPackageSearchBtn')?.click();}); bind('cloudProductSearchBtn','onclick',()=>{state._cloudProductSearch=$('cloudProductSearch')?.value||'';renderCloudProducts(state._cloudProductCatalog);}); bind('cloudProductSearch','onkeydown',e=>{if(e.key==='Enter')$('cloudProductSearchBtn')?.click();}); bind('cloudAnnouncementsRefresh','onclick',async()=>{try{const r=await apiGet('cloud/announcements');state._cloudAnnouncements=r.announcements||[];renderCloudAnnouncements(state._cloudAnnouncements,state._cloudSite);toast('网站公告已刷新');}catch(e){toast(e.message||String(e));}});
   bind('importRun','onclick',importData);
   bind('loginBtn','onclick',login);
